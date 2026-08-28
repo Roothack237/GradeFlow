@@ -1,43 +1,29 @@
-import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcrypt";
+import { PrismaClient, SectionType } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const email = "admin@gradeflow.com";
-  const password = "Admin@12345";
-
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  const admin = await prisma.user.upsert({
+  await prisma.section.upsert({
     where: {
-      email,
+      name: SectionType.ANGLOPHONE,
     },
-
-    update: {
-      passwordHash,
-      role: "ADMIN",
-      status: "ACTIVE",
-    },
-
+    update: {},
     create: {
-      firstName: "School",
-      lastName: "Administrator",
-      email,
-      passwordHash,
-
-      // Admin does not use a login code,
-      // but the field currently exists in our schema.
-      loginCode: "ADMIN",
-
-      role: "ADMIN",
-      status: "ACTIVE",
+      name: SectionType.ANGLOPHONE,
     },
   });
 
-  console.log("Admin account created:");
-  console.log("Email:", admin.email);
-  console.log("Password:", password);
+  await prisma.section.upsert({
+    where: {
+      name: SectionType.FRANCOPHONE,
+    },
+    update: {},
+    create: {
+      name: SectionType.FRANCOPHONE,
+    },
+  });
+
+  console.log("Sections created successfully.");
 }
 
 main()

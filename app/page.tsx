@@ -18,11 +18,9 @@ export default function Home() {
       <Hero />
       <Features />
       <WhyChoose />
-      <DashboardPreview />
       <AISection />
       <Statistics />
       <CTA />
-      <Contact />
       <Footer />
     </main>
   );

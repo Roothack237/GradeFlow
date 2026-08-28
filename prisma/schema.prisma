@@ -95,24 +95,23 @@ model Administrator {
 model Teacher {
   id String @id @default(cuid())
 
-  firstName  String
-  fullName  String
+  firstName String
   lastName  String
-  
+  email     String
+  fullName  String
+
+  dateOfBirth DateTime?
+
   userId    String @unique
   teacherId String @unique
-  loginCode   String @unique
-  teacherCode String @unique
-
-  assignments TeacherAssignment[]
-
-  timetable Timetable[]
-
-  attendances Attendance[]
-
-  marks Mark[]
+  loginCode String @unique
 
   phone String?
+
+  assignments TeacherAssignment[]
+  timetable   Timetable[]
+  attendances Attendance[]
+  marks       Mark[]
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -137,20 +136,7 @@ model Parent {
 model Section {
   id String @id @default(cuid())
 
-  name SectionType @unique
-
-  levels Level[]
-}
-
-model Level {
-  id String @id @default(cuid())
-
-  name String
-
-  sectionId String
-
-  section Section @relation(fields: [sectionId], references: [id])
-
+  name       SectionType @unique
   classrooms Classroom[]
 }
 
@@ -159,14 +145,13 @@ model Classroom {
 
   name String
 
-  levelId            String
+  sectionId String
+
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
   teacherAssignments TeacherAssignment[]
-
-  timetable Timetable[]
-
-  level Level @relation(fields: [levelId], references: [id])
-
-  students Student[]
+  timetable          Timetable[]
+  students           Student[]
 }
 
 model Student {
@@ -175,31 +160,25 @@ model Student {
   matricule String @unique
 
   firstName String
+  lastName  String
 
-  lastName String
-
-  gender Gender
-
+  gender      Gender
   dateOfBirth DateTime
 
+  status AccountStatus @default(ACTIVE)
+
   attendances Attendance[]
-
-  timetable Timetable[]
-
-  marks Mark[]
-
+  timetable   Timetable[]
+  marks       Mark[]
   reportCards ReportCard[]
 
   classroomId String
-
-  classroom Classroom @relation(fields: [classroomId], references: [id])
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
 
   parentId String?
-
-  parent Parent? @relation(fields: [parentId], references: [id])
+  parent   Parent? @relation(fields: [parentId], references: [id])
 
   createdAt DateTime @default(now())
-
   updatedAt DateTime @updatedAt
 }
 
@@ -246,15 +225,17 @@ model TeacherAssignment {
 }
 
 model AcademicYear {
-  id String @id @default(cuid())
+  id        String   @id @default(cuid())
+  name      String   @unique
+  startDate DateTime
+  endDate   DateTime
 
-  name String @unique
-
-  isCurrent Boolean @default(false)
-
-  terms Term[]
+  // Add your existing relations here
+  // classrooms Classroom[]
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  terms     Term[]
 }
 
 model Term {

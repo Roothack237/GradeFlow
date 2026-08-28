@@ -84,7 +84,7 @@ export default function AddTeacherPage() {
           Back to Manage Accounts
         </Link>
 
-        <div className="rounded-3xl border bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:p-8">
+        <div className="rounded-3xl border bg-white p-6 shadow-sm dark:border-purple-700 dark:bg-purple-700 sm:p-8">
 
           {/* Header */}
 
@@ -118,7 +118,7 @@ export default function AddTeacherPage() {
               {/* First Name */}
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-300">
                   First Name
                 </label>
 
@@ -128,14 +128,14 @@ export default function AddTeacherPage() {
                   onChange={handleChange}
                   required
                   placeholder="Enter first name"
-                  className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
+                  className="h-12 w-full rounded-xl border border-purple-600 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
                 />
               </div>
 
               {/* Last Name */}
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-300">
                   Last Name
                 </label>
 
@@ -145,7 +145,7 @@ export default function AddTeacherPage() {
                   onChange={handleChange}
                   required
                   placeholder="Enter last name"
-                  className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
+                  className="h-12 w-full rounded-xl border border-purple-600 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
                 />
               </div>
 
@@ -154,7 +154,7 @@ export default function AddTeacherPage() {
             {/* Email */}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-300">
                 Email Address
               </label>
 
@@ -165,14 +165,14 @@ export default function AddTeacherPage() {
                 onChange={handleChange}
                 required
                 placeholder="teacher@example.com"
-                className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
+                className="h-12 w-full rounded-xl border border-purple-600 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
               />
             </div>
 
             {/* Phone */}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-300">
                 Phone Number
               </label>
 
@@ -181,7 +181,7 @@ export default function AddTeacherPage() {
                 value={form.phone}
                 onChange={handleChange}
                 placeholder="+237 6XX XXX XXX"
-                className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
+                className="h-12 w-full rounded-xl border border-purple-600 bg-gray-50 px-4 text-sm outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:ring-purple-950"
               />
             </div>
            

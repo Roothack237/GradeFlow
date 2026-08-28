@@ -1,7 +1,8 @@
 
 import type { Metadata } from "next";
 import "./globals.css";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
+
 
 export const metadata: Metadata = {
   title: "GradeFlow",
@@ -15,12 +16,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem={false}
-        >
+      <body className="bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-white">
+        <ThemeProvider>
           {children}
         </ThemeProvider>
       </body>

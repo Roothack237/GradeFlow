@@ -71,12 +71,7 @@ export default function Navbar() {
             Login
           </Link>
 
-          <Link
-            href="/login"
-            className="rounded-xl bg-violet-700 px-6 py-2 font-semibold text-white transition hover:bg-violet-800"
-          >
-            Get Started
-          </Link>
+         
         </div>
 
         {/* Mobile Controls */}
@@ -120,24 +115,14 @@ export default function Navbar() {
           </nav>
 
           {/* Mobile Buttons */}
-          <div className="mt-4 grid grid-cols-2 gap-3">
-
-            <Link
-              href="/login"
-              onClick={() => setMenuOpen(false)}
-              className="rounded-xl border border-violet-600 px-4 py-3 text-center font-medium text-violet-700"
-            >
-              Login
-            </Link>
-
-            <Link
-              href="/login"
-              onClick={() => setMenuOpen(false)}
-              className="rounded-xl bg-violet-700 px-4 py-3 text-center font-semibold text-white"
-            >
-              Get Started
-            </Link>
-
+          <div className="mt-4 flex  justify-center">
+              <Link
+                href="/login"
+                onClick={() => setMenuOpen(false)}
+                className="rounded-xl w-60 border text-xl border-violet-600 px-8 py-3 text-center font-medium text-violet-700 hover:text-gray-950 hover:bg-purple-900"
+              >
+                Login
+              </Link>
           </div>
         </div>
       )}

@@ -65,7 +65,7 @@ export default function Features() {
           </h2>
 
           <p className="mx-auto mt-6 max-w-3xl text-lg text-gray-600 transition-colors duration-300 dark:text-gray-300">
-            GradeFlow centralizes academic management into one secure and
+            GradeFlow centralizes academic results management into one secure and
             intelligent platform.
           </p>
         </div>

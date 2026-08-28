@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import {
-  ArrowLeft,
-  CalendarDays,
   Check,
   Save,
   Users,
+  CalendarDays,
 } from "lucide-react";
 
 type Student = {
@@ -48,9 +46,15 @@ export default function TeacherAttendancePage() {
   const [students, setStudents] =
     useState<Student[]>(initialStudents);
 
-  const [classroom, setClassroom] = useState("Form 1 A");
-  const [subject, setSubject] = useState("Mathematics");
-  const [sequence, setSequence] = useState("First Term");
+  const [classroom, setClassroom] =
+    useState("Form 1 A");
+
+  const [subject, setSubject] =
+    useState("Mathematics");
+
+  const [term, setTerm] =
+    useState("First Term");
+
   const [date, setDate] = useState(
     new Date().toISOString().split("T")[0]
   );
@@ -62,10 +66,7 @@ export default function TeacherAttendancePage() {
     setStudents((current) =>
       current.map((student) =>
         student.id === studentId
-          ? {
-              ...student,
-              status,
-            }
+          ? { ...student, status }
           : student
       )
     );
@@ -84,7 +85,7 @@ export default function TeacherAttendancePage() {
     console.log({
       classroom,
       subject,
-      sequence,
+      term,
       date,
       students,
     });
@@ -92,37 +93,69 @@ export default function TeacherAttendancePage() {
     alert("Attendance saved successfully!");
   }
 
+  const presentCount = students.filter(
+    (student) => student.status === "PRESENT"
+  ).length;
+
+  const absentCount = students.filter(
+    (student) => student.status === "ABSENT"
+  ).length;
+
+  const lateCount = students.filter(
+    (student) => student.status === "LATE"
+  ).length;
+
+  const excusedCount = students.filter(
+    (student) => student.status === "EXCUSED"
+  ).length;
+
   return (
-    <main className="min-h-screen bg-gray-50 p-6 dark:bg-gray-950">
-      <div className="mx-auto max-w-6xl">
+    <div className="min-h-[calc(100vh-5rem)] bg-gray-50 p-5 sm:p-8 dark:bg-gray-950">
+      <div className="mx-auto max-w-7xl">
 
-        {/* Header */}
-        <div>
-          <Link
-            href="/teacher/dashboard"
-            className="mb-4 inline-flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600"
-          >
-            <ArrowLeft size={16} />
-            Back to Dashboard
-          </Link>
+        {/* Page Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+              <Users size={23} />
+            </div>
 
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Attendance
-          </h1>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Attendance
+              </h1>
 
-          <p className="mt-1 text-gray-500 dark:text-gray-400">
-            Record attendance for your students.
-          </p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Record and manage student attendance.
+              </p>
+            </div>
+          </div>
         </div>
 
-        {/* Selection */}
-        <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+        {/* Selection Card */}
+        <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <div className="mb-5 flex items-center gap-3">
+            <CalendarDays
+              size={20}
+              className="text-purple-600"
+            />
+
+            <div>
+              <h2 className="font-semibold text-gray-900 dark:text-white">
+                Attendance Details
+              </h2>
+
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Select the class, subject and date.
+              </p>
+            </div>
+          </div>
 
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
 
             {/* Classroom */}
             <div>
-              <label className="mb-2 block text-sm font-medium">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Classroom
               </label>
 
@@ -131,7 +164,7 @@ export default function TeacherAttendancePage() {
                 onChange={(e) =>
                   setClassroom(e.target.value)
                 }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               >
                 <option>Form 1 A</option>
                 <option>Form 1 B</option>
@@ -142,7 +175,7 @@ export default function TeacherAttendancePage() {
 
             {/* Subject */}
             <div>
-              <label className="mb-2 block text-sm font-medium">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Subject
               </label>
 
@@ -151,7 +184,7 @@ export default function TeacherAttendancePage() {
                 onChange={(e) =>
                   setSubject(e.target.value)
                 }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               >
                 <option>Mathematics</option>
                 <option>English Language</option>
@@ -160,18 +193,18 @@ export default function TeacherAttendancePage() {
               </select>
             </div>
 
-            {/* Sequence */}
+            {/* Term */}
             <div>
-              <label className="mb-2 block text-sm font-medium">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Term
               </label>
 
               <select
-                value={sequence}
+                value={term}
                 onChange={(e) =>
-                  setSequence(e.target.value)
+                  setTerm(e.target.value)
                 }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               >
                 <option>First Term</option>
                 <option>Second Term</option>
@@ -181,7 +214,7 @@ export default function TeacherAttendancePage() {
 
             {/* Date */}
             <div>
-              <label className="mb-2 block text-sm font-medium">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Date
               </label>
 
@@ -191,20 +224,48 @@ export default function TeacherAttendancePage() {
                 onChange={(e) =>
                   setDate(e.target.value)
                 }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               />
             </div>
 
           </div>
         </div>
 
+        {/* Summary */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+          <SummaryCard
+            label="Present"
+            value={presentCount}
+            className="text-green-600"
+          />
+
+          <SummaryCard
+            label="Absent"
+            value={absentCount}
+            className="text-red-600"
+          />
+
+          <SummaryCard
+            label="Late"
+            value={lateCount}
+            className="text-yellow-600"
+          />
+
+          <SummaryCard
+            label="Excused"
+            value={excusedCount}
+            className="text-blue-600"
+          />
+
+        </div>
+
         {/* Students */}
-        <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
 
           <div className="flex flex-col justify-between gap-4 border-b border-gray-200 p-6 sm:flex-row sm:items-center dark:border-gray-800">
 
             <div className="flex items-center gap-3">
-
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
                 <Users size={21} />
               </div>
@@ -214,16 +275,16 @@ export default function TeacherAttendancePage() {
                   {classroom}
                 </h2>
 
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   {students.length} students
                 </p>
               </div>
-
             </div>
 
             <button
+              type="button"
               onClick={markAllPresent}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50 dark:border-green-900 dark:text-green-400"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-50 dark:border-green-900 dark:text-green-400 dark:hover:bg-green-950/30"
             >
               <Check size={16} />
               Mark All Present
@@ -231,7 +292,7 @@ export default function TeacherAttendancePage() {
 
           </div>
 
-          {/* Student rows */}
+          {/* Student Rows */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
 
             {students.map((student) => (
@@ -239,85 +300,75 @@ export default function TeacherAttendancePage() {
                 key={student.id}
                 className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
               >
-
                 <div>
                   <h3 className="font-semibold text-gray-900 dark:text-white">
                     {student.name}
                   </h3>
 
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     {student.matricule}
                   </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
 
-                  <button
+                  <StatusButton
+                    label="Present"
+                    active={
+                      student.status === "PRESENT"
+                    }
+                    activeClass="bg-green-600 text-white"
                     onClick={() =>
                       updateStatus(
                         student.id,
                         "PRESENT"
                       )
                     }
-                    className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                      student.status === "PRESENT"
-                        ? "bg-green-600 text-white"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    Present
-                  </button>
+                  />
 
-                  <button
+                  <StatusButton
+                    label="Absent"
+                    active={
+                      student.status === "ABSENT"
+                    }
+                    activeClass="bg-red-600 text-white"
                     onClick={() =>
                       updateStatus(
                         student.id,
                         "ABSENT"
                       )
                     }
-                    className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                      student.status === "ABSENT"
-                        ? "bg-red-600 text-white"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    Absent
-                  </button>
+                  />
 
-                  <button
+                  <StatusButton
+                    label="Late"
+                    active={
+                      student.status === "LATE"
+                    }
+                    activeClass="bg-yellow-500 text-white"
                     onClick={() =>
                       updateStatus(
                         student.id,
                         "LATE"
                       )
                     }
-                    className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                      student.status === "LATE"
-                        ? "bg-yellow-500 text-white"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    Late
-                  </button>
+                  />
 
-                  <button
+                  <StatusButton
+                    label="Excused"
+                    active={
+                      student.status === "EXCUSED"
+                    }
+                    activeClass="bg-blue-600 text-white"
                     onClick={() =>
                       updateStatus(
                         student.id,
                         "EXCUSED"
                       )
                     }
-                    className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                      student.status === "EXCUSED"
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    Excused
-                  </button>
+                  />
 
                 </div>
-
               </div>
             ))}
 
@@ -327,8 +378,9 @@ export default function TeacherAttendancePage() {
           <div className="flex justify-end border-t border-gray-200 p-6 dark:border-gray-800">
 
             <button
+              type="button"
               onClick={handleSave}
-              className="inline-flex items-center gap-2 rounded-xl bg-purple-700 px-6 py-3 font-semibold text-white hover:bg-purple-800"
+              className="inline-flex items-center gap-2 rounded-xl bg-purple-700 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-purple-800"
             >
               <Save size={18} />
               Save Attendance
@@ -337,8 +389,65 @@ export default function TeacherAttendancePage() {
           </div>
 
         </div>
-
       </div>
-    </main>
+    </div>
+  );
+}
+
+/* =========================================================
+   SUMMARY CARD
+========================================================= */
+
+function SummaryCard({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: number;
+  className: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {label}
+      </p>
+
+      <p
+        className={`mt-2 text-2xl font-bold ${className}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   STATUS BUTTON
+========================================================= */
+
+function StatusButton({
+  label,
+  active,
+  activeClass,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  activeClass: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+        active
+          ? activeClass
+          : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
