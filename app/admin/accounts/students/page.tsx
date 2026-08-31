@@ -15,7 +15,25 @@ type Student = {
   gender?: string | null;
   dateOfBirth?: string | null;
   matricule?: string | null;
+
+  classroomId?: string | null;
   className?: string | null;
+  sectionName?: string | null;
+};
+
+type SectionItem = {
+  id: string;
+  name: string;
+};
+
+type ClassItem = {
+  id: string;
+  name: string;
+  sectionId: string;
+  section?: {
+    id: string;
+    name: string;
+  };
 };
 
 const initialFormData = {
@@ -23,7 +41,8 @@ const initialFormData = {
   lastName: "",
   gender: "",
   dateOfBirth: "",
-  className: "",
+  sectionId: "",
+  classId: "",
 };
 
 export default function StudentsPage() {
@@ -31,21 +50,28 @@ export default function StudentsPage() {
   const [loading, setLoading] = useState(true);
 
   // =========================================================
+  // SECTIONS AND CLASSES
+  // =========================================================
+
+  const [sections, setSections] = useState<SectionItem[]>([]);
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+
+  // =========================================================
   // MODAL
   // =========================================================
 
   const [showModal, setShowModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  // null = creating a new student
-  // student = editing an existing student
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [editingStudent, setEditingStudent] =
+    useState<Student | null>(null);
 
   // =========================================================
   // DELETE
   // =========================================================
 
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
 
   // =========================================================
   // FORM
@@ -88,9 +114,6 @@ export default function StudentsPage() {
         }
       }
 
-      console.log("STUDENTS API STATUS:", response.status);
-      console.log("STUDENTS API RESPONSE:", data);
-
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -116,9 +139,141 @@ export default function StudentsPage() {
     }
   };
 
+  // =========================================================
+  // FETCH SECTIONS
+  // =========================================================
+
+  const fetchSections = async () => {
+    try {
+      const response = await fetch("/api/admin/sections", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const responseText = await response.text();
+
+      let data: any = {};
+
+      if (responseText.trim()) {
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          console.error(
+            "INVALID JSON FROM SECTIONS API:",
+            responseText
+          );
+
+          throw new Error(
+            `Sections API returned invalid response (${response.status})`
+          );
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            `Failed to fetch sections (${response.status})`
+        );
+      }
+
+      const sectionList = Array.isArray(data)
+        ? data
+        : Array.isArray(data.sections)
+        ? data.sections
+        : Array.isArray(data.data)
+        ? data.data
+        : [];
+
+      setSections(sectionList);
+    } catch (error) {
+      console.error("FAILED TO FETCH SECTIONS:", error);
+      setSections([]);
+    }
+  };
+
+  // =========================================================
+  // FETCH CLASSES
+  // =========================================================
+
+  const fetchClasses = async () => {
+    try {
+      setLoadingClasses(true);
+
+      const response = await fetch("/api/admin/classes", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const responseText = await response.text();
+
+      let data: any = {};
+
+      if (responseText.trim()) {
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          console.error(
+            "INVALID JSON FROM CLASSES API:",
+            responseText
+          );
+
+          throw new Error(
+            `Classes API returned invalid response (${response.status})`
+          );
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            `Failed to fetch classes (${response.status})`
+        );
+      }
+
+      const classList = Array.isArray(data)
+        ? data
+        : Array.isArray(data.classes)
+        ? data.classes
+        : Array.isArray(data.data)
+        ? data.data
+        : [];
+
+      setClasses(classList);
+    } catch (error) {
+      console.error("FAILED TO FETCH CLASSES:", error);
+      setClasses([]);
+    } finally {
+      setLoadingClasses(false);
+    }
+  };
+
+  // =========================================================
+  // INITIAL LOAD
+  // =========================================================
+
   useEffect(() => {
     fetchStudents();
+    fetchSections();
+    fetchClasses();
   }, []);
+
+  // =========================================================
+  // FILTER CLASSES BY SECTION
+  // =========================================================
+
+  const filteredClasses = formData.sectionId
+    ? classes.filter(
+        (classItem) =>
+          classItem.sectionId === formData.sectionId ||
+          classItem.section?.id === formData.sectionId
+      )
+    : [];
 
   // =========================================================
   // OPEN ADD MODAL
@@ -137,6 +292,10 @@ export default function StudentsPage() {
   const openEditModal = (student: Student) => {
     setEditingStudent(student);
 
+    const selectedClass = classes.find(
+      (item) => item.id === student.classroomId
+    );
+
     setFormData({
       firstName: student.firstName || "",
       lastName: student.lastName || "",
@@ -144,7 +303,11 @@ export default function StudentsPage() {
       dateOfBirth: student.dateOfBirth
         ? student.dateOfBirth.substring(0, 10)
         : "",
-      className: student.className || "",
+      sectionId:
+        selectedClass?.sectionId ||
+        selectedClass?.section?.id ||
+        "",
+      classId: student.classroomId || "",
     });
 
     setShowModal(true);
@@ -173,6 +336,17 @@ export default function StudentsPage() {
   ) => {
     const { name, value } = e.target;
 
+    // When section changes, reset the class
+    if (name === "sectionId") {
+      setFormData((previous) => ({
+        ...previous,
+        sectionId: value,
+        classId: "",
+      }));
+
+      return;
+    }
+
     setFormData((previous) => ({
       ...previous,
       [name]: value,
@@ -188,12 +362,22 @@ export default function StudentsPage() {
   ) => {
     e.preventDefault();
 
+    if (!formData.sectionId) {
+      alert("Please select a section.");
+      return;
+    }
+
+    if (!formData.classId) {
+      alert("Please select a class.");
+      return;
+    }
+
     try {
       setSubmitting(true);
 
-      // -------------------------------------------------------
+      // =====================================================
       // UPDATE
-      // -------------------------------------------------------
+      // =====================================================
 
       if (editingStudent) {
         const response = await fetch(
@@ -208,7 +392,7 @@ export default function StudentsPage() {
               lastName: formData.lastName,
               gender: formData.gender || null,
               dateOfBirth: formData.dateOfBirth || null,
-              className: formData.className || null,
+              classroomId: formData.classId,
             }),
           }
         );
@@ -224,14 +408,15 @@ export default function StudentsPage() {
         alert("Student updated successfully.");
 
         closeModal();
+
         await fetchStudents();
 
         return;
       }
 
-      // -------------------------------------------------------
+      // =====================================================
       // CREATE
-      // -------------------------------------------------------
+      // =====================================================
 
       const response = await fetch("/api/admin/students", {
         method: "POST",
@@ -243,7 +428,10 @@ export default function StudentsPage() {
           lastName: formData.lastName,
           gender: formData.gender || null,
           dateOfBirth: formData.dateOfBirth || null,
-          className: formData.className || null,
+
+          // IMPORTANT:
+          // The backend expects classroomId
+          classroomId: formData.classId,
         }),
       });
 
@@ -292,7 +480,9 @@ export default function StudentsPage() {
       }`.trim();
 
     const confirmed = window.confirm(
-      `Are you sure you want to delete ${studentName || "this student"}?\n\nThis action cannot be undone.`
+      `Are you sure you want to delete ${
+        studentName || "this student"
+      }?\n\nThis action cannot be undone.`
     );
 
     if (!confirmed) return;
@@ -315,7 +505,6 @@ export default function StudentsPage() {
         );
       }
 
-      // Remove immediately from UI
       setStudents((previous) =>
         previous.filter(
           (item) => item.id !== student.id
@@ -366,13 +555,9 @@ export default function StudentsPage() {
         <Navbar title="Students" />
 
         <main className="p-5 sm:p-8">
-
-          {/* =================================================
-              PAGE HEADER
-          ================================================= */}
+          {/* PAGE HEADER */}
 
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                 Students
@@ -392,14 +577,10 @@ export default function StudentsPage() {
             </button>
           </div>
 
-          {/* =================================================
-              STUDENT COUNT
-          ================================================= */}
+          {/* STUDENT COUNT */}
 
           <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
             <div className="flex items-center justify-between">
-
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
                   Total Students
@@ -413,24 +594,16 @@ export default function StudentsPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-xl dark:bg-blue-900/30">
                 🎓
               </div>
-
             </div>
           </div>
 
-          {/* =================================================
-              STUDENTS TABLE
-          ================================================= */}
+          {/* STUDENTS TABLE */}
 
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
             <div className="overflow-x-auto">
-
               <table className="w-full min-w-[1250px] text-left text-sm">
-
                 <thead className="border-b bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
-
                   <tr>
-
                     <th className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
                       #
                     </th>
@@ -452,50 +625,40 @@ export default function StudentsPage() {
                     </th>
 
                     <th className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
+                      Section
+                    </th>
+
+                    <th className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
                       Class
                     </th>
 
-                    {/* NEW */}
                     <th className="px-6 py-4 text-right font-semibold text-gray-700 dark:text-gray-300">
                       Actions
                     </th>
-
                   </tr>
-
                 </thead>
 
                 <tbody className="divide-y dark:divide-gray-800">
-
-                  {/* LOADING */}
-
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="px-6 py-12 text-center text-gray-500 dark:text-gray-400"
                       >
                         Loading students...
                       </td>
                     </tr>
                   ) : students.length === 0 ? (
-
-                    /* EMPTY */
-
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="px-6 py-12 text-center text-gray-500 dark:text-gray-400"
                       >
                         No students found.
                       </td>
                     </tr>
-
                   ) : (
-
-                    /* STUDENTS */
-
                     students.map((student, index) => {
-
                       const studentName =
                         student.fullName ||
                         `${student.firstName ?? ""} ${
@@ -507,27 +670,17 @@ export default function StudentsPage() {
                           key={student.id}
                           className="transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
                         >
-
-                          {/* NUMBER */}
-
                           <td className="px-6 py-5 text-gray-500 dark:text-gray-400">
                             {index + 1}
                           </td>
 
-                          {/* NAME */}
-
                           <td className="px-6 py-5">
-
                             <div className="font-semibold text-gray-900 dark:text-white">
                               {studentName || "Student"}
                             </div>
-
                           </td>
 
-                          {/* MATRICULE */}
-
                           <td className="px-6 py-5">
-
                             {student.matricule ? (
                               <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
                                 {student.matricule}
@@ -537,25 +690,29 @@ export default function StudentsPage() {
                                 —
                               </span>
                             )}
-
                           </td>
-
-                          {/* GENDER */}
 
                           <td className="px-6 py-5 text-gray-600 dark:text-gray-400">
                             {student.gender || "—"}
                           </td>
 
-                          {/* DATE OF BIRTH */}
-
                           <td className="px-6 py-5 text-gray-600 dark:text-gray-400">
                             {formatDate(student.dateOfBirth)}
                           </td>
 
-                          {/* CLASS */}
+                          <td className="px-6 py-5">
+                            {student.sectionName ? (
+                              <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                                {student.sectionName}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">
+                                —
+                              </span>
+                            )}
+                          </td>
 
                           <td className="px-6 py-5">
-
                             {student.className ? (
                               <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">
                                 {student.className}
@@ -565,19 +722,10 @@ export default function StudentsPage() {
                                 Not assigned
                               </span>
                             )}
-
                           </td>
 
-                          {/* =================================================
-                              ACTIONS
-                          ================================================= */}
-
                           <td className="px-6 py-5">
-
                             <div className="flex justify-end gap-2">
-
-                              {/* EDIT */}
-
                               <button
                                 type="button"
                                 onClick={() =>
@@ -590,8 +738,6 @@ export default function StudentsPage() {
                               >
                                 ✏️ Edit
                               </button>
-
-                              {/* DELETE */}
 
                               <button
                                 type="button"
@@ -607,23 +753,16 @@ export default function StudentsPage() {
                                   ? "Deleting..."
                                   : "🗑️ Delete"}
                               </button>
-
                             </div>
-
                           </td>
-
                         </tr>
                       );
                     })
                   )}
-
                 </tbody>
-
               </table>
-
             </div>
           </div>
-
         </main>
       </div>
 
@@ -640,17 +779,12 @@ export default function StudentsPage() {
             }
           }}
         >
-
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
 
-            {/* =================================================
-                MODAL HEADER
-            ================================================= */}
+            {/* MODAL HEADER */}
 
             <div className="flex items-center justify-between border-b border-gray-200 px-6 py-5 dark:border-gray-800">
-
               <div>
-
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                   {editingStudent
                     ? "Edit Student"
@@ -662,7 +796,6 @@ export default function StudentsPage() {
                     ? "Update the student's information."
                     : "Register a new student."}
                 </p>
-
               </div>
 
               <button
@@ -673,36 +806,28 @@ export default function StudentsPage() {
               >
                 ×
               </button>
-
             </div>
 
-            {/* =================================================
-                FORM
-            ================================================= */}
+            {/* FORM */}
 
             <form
               onSubmit={handleSubmit}
               className="space-y-6 p-6"
             >
-
               <div>
-
                 <h3 className="text-base font-semibold text-gray-900 dark:text-white">
                   Student Information
                 </h3>
 
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Enter the students personal information.
+                  Enter the student's personal information.
                 </p>
-
               </div>
 
               {/* FIRST + LAST NAME */}
 
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-
                 <div>
-
                   <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     First Name
                   </label>
@@ -716,11 +841,9 @@ export default function StudentsPage() {
                     placeholder="Enter first name"
                     className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   />
-
                 </div>
 
                 <div>
-
                   <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Last Name
                   </label>
@@ -734,17 +857,13 @@ export default function StudentsPage() {
                     placeholder="Enter last name"
                     className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   />
-
                 </div>
-
               </div>
 
               {/* GENDER + DATE OF BIRTH */}
 
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-
                 <div>
-
                   <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Gender
                   </label>
@@ -756,7 +875,6 @@ export default function StudentsPage() {
                     required
                     className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   >
-
                     <option value="">
                       Select gender
                     </option>
@@ -768,13 +886,10 @@ export default function StudentsPage() {
                     <option value="FEMALE">
                       Female
                     </option>
-
                   </select>
-
                 </div>
 
                 <div>
-
                   <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Date of Birth
                   </label>
@@ -787,65 +902,125 @@ export default function StudentsPage() {
                     required
                     className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   />
-
                 </div>
-
               </div>
 
-              {/* CLASS */}
+              {/* =================================================
+                  SECTION
+              ================================================= */}
 
               <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Section
+                </label>
 
+                <select
+                  name="sectionId"
+                  value={formData.sectionId}
+                  onChange={handleChange}
+                  required
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                >
+                  <option value="">
+                    Select section
+                  </option>
+
+                  {sections.map((section) => (
+                    <option
+                      key={section.id}
+                      value={section.id}
+                    >
+                      {section.name}
+                    </option>
+                  ))}
+                </select>
+
+                {sections.length === 0 && (
+                  <p className="mt-2 text-xs text-red-500">
+                    No sections available. Please create a
+                    section first.
+                  </p>
+                )}
+              </div>
+
+              {/* =================================================
+                  CLASS
+              ================================================= */}
+
+              <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Class
                 </label>
 
-                <input
-                  type="text"
-                  name="className"
-                  value={formData.className}
+                <select
+                  name="classId"
+                  value={formData.classId}
                   onChange={handleChange}
-                  placeholder="Enter class"
-                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                />
+                  required
+                  disabled={
+                    !formData.sectionId ||
+                    loadingClasses
+                  }
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-950"
+                >
+                  <option value="">
+                    {!formData.sectionId
+                      ? "Select a section first"
+                      : loadingClasses
+                      ? "Loading classes..."
+                      : filteredClasses.length === 0
+                      ? "No classes in this section"
+                      : "Select class"}
+                  </option>
 
+                  {filteredClasses.map((classItem) => (
+                    <option
+                      key={classItem.id}
+                      value={classItem.id}
+                    >
+                      {classItem.name}
+                    </option>
+                  ))}
+                </select>
+
+                {formData.sectionId &&
+                  filteredClasses.length === 0 &&
+                  !loadingClasses && (
+                    <p className="mt-2 text-xs text-red-500">
+                      No classes are available for the
+                      selected section.
+                    </p>
+                  )}
               </div>
 
               {/* AUTOMATIC INFORMATION */}
 
               {!editingStudent && (
                 <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-900/20">
-
                   <div className="flex gap-3">
-
                     <div className="text-lg">
                       ℹ️
                     </div>
 
                     <div>
-
                       <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
                         Automatically generated
                       </p>
 
                       <p className="mt-1 text-xs leading-5 text-blue-700 dark:text-blue-400">
-                        The student's matricule,
-                        email address and phone number
-                        will be generated automatically
-                        by the system after registration.
+                        The student's matricule, email
+                        address and phone number will be
+                        generated automatically by the system
+                        after registration.
                       </p>
-
                     </div>
-
                   </div>
-
                 </div>
               )}
 
               {/* FORM ACTIONS */}
 
               <div className="flex justify-end gap-3 border-t border-gray-200 pt-5 dark:border-gray-800">
-
                 <button
                   type="button"
                   onClick={closeModal}
@@ -857,7 +1032,11 @@ export default function StudentsPage() {
 
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={
+                    submitting ||
+                    !formData.sectionId ||
+                    !formData.classId
+                  }
                   className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting
@@ -868,13 +1047,9 @@ export default function StudentsPage() {
                     ? "Save Changes"
                     : "Add Student"}
                 </button>
-
               </div>
-
             </form>
-
           </div>
-
         </div>
       )}
     </div>

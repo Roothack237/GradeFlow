@@ -97,16 +97,18 @@ model Teacher {
 
   firstName String
   lastName  String
-  email     String
   fullName  String
+
+  email String
+  phone String?
+
+  gender String?
 
   dateOfBirth DateTime?
 
   userId    String @unique
   teacherId String @unique
   loginCode String @unique
-
-  phone String?
 
   assignments TeacherAssignment[]
   timetable   Timetable[]
@@ -124,11 +126,16 @@ model Parent {
 
   fullName String
   lastName String
+  email    String?
+  phone    String?
 
-  phone String?
+  gender      String?
+  dateOfBirth DateTime?
 
-  children  Student[]
-  createdAt DateTime  @default(now())
+  children Student[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -136,8 +143,9 @@ model Parent {
 model Section {
   id String @id @default(cuid())
 
-  name       SectionType @unique
-  classrooms Classroom[]
+  name               SectionType         @unique
+  classrooms         Classroom[]
+  teacherAssignments TeacherAssignment[]
 }
 
 model Classroom {
@@ -149,9 +157,9 @@ model Classroom {
 
   section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
-  teacherAssignments TeacherAssignment[]
-  timetable          Timetable[]
-  students           Student[]
+  assignments TeacherAssignment[]
+  timetable   Timetable[]
+  students    Student[]
 }
 
 model Student {
@@ -207,21 +215,19 @@ model Subject {
 model TeacherAssignment {
   id String @id @default(cuid())
 
-  teacherId String
-
-  subjectId String
-
+  teacherId   String
+  sectionId   String
   classroomId String
+  subjectId   String
 
-  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-
-  subject Subject @relation(fields: [subjectId], references: [id])
-
-  classroom Classroom @relation(fields: [classroomId], references: [id])
+  teacher   Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  section   Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
-  @@unique([teacherId, subjectId, classroomId])
+  @@unique([teacherId, sectionId, classroomId, subjectId])
 }
 
 model AcademicYear {

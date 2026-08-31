@@ -165,14 +165,14 @@ export default function AdminDashboardPage() {
             <section className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
 
               <ActionCard
-                href="/admin/accounts/teachers/add"
+                href="/admin/accounts/teachers"
                 title="Add Teacher"
                 description="Create a teacher account"
                 icon={<Users size={22} />}
               />
 
               <ActionCard
-                href="/admin/accounts/parents/add"
+                href="/admin/accounts/parents"
                 title="Add Parent"
                 description="Create a parent account"
                 icon={<UserRound size={22} />}

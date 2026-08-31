@@ -281,7 +281,7 @@ export default function AcademicYearSectionsPage() {
                 type="button"
                 disabled
                 title="Section creation will be added soon"
-                className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 font-semibold text-white opacity-70"
+                className="inline-flex cursor items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 font-semibold text-white opacity-70"
               >
                 <Plus size={18} />
 
@@ -439,7 +439,7 @@ export default function AcademicYearSectionsPage() {
 
                           <Link
                             key={section.id}
-                            href={`/admin/academic-years/${id}/sections/${section.id}`}
+                            href={`/admin/academic-years/${id}/sections/anglophone`}
                             className="group flex items-center justify-between p-5 transition hover:bg-purple-50 dark:hover:bg-purple-950/20"
                           >
 
@@ -551,7 +551,7 @@ export default function AcademicYearSectionsPage() {
 
                           <Link
                             key={section.id}
-                            href={`/admin/academic-years/${id}/sections/${section.id}`}
+                            href={`/admin/academic-years/${id}/sections/francophone`}
                             className="group flex items-center justify-between p-5 transition hover:bg-blue-50 dark:hover:bg-blue-950/20"
                           >
 

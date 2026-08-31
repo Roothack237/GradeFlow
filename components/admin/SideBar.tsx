@@ -375,7 +375,7 @@ export default function Sidebar({
                   />
 
                   <SidebarLink
-                    href="/admin/notifications"
+                    href="/admin/communication/notifications"
                     icon={<Bell size={19} />}
                     label="Notifications"
                     onClick={closeSidebar}

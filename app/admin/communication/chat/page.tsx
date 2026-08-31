@@ -277,7 +277,7 @@ export default function EllaAIPage() {
             </div>
 
             {/* MESSAGE AREA */}
-            <div className="h-[520px] overflow-y-auto p-5 sm:p-6">
+            <div className="h-520px overflow-y-auto p-5 sm:p-6">
 
               <div className="mx-auto max-w-4xl space-y-5">
 
@@ -421,7 +421,7 @@ export default function EllaAIPage() {
                   disabled={sending}
                   rows={1}
                   placeholder="Ask Ella anything about your school..."
-                  className="max-h-32 min-h-[48px] flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-800"
+                  className="max-h-32 min-h-48px flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-800"
                 />
 
                 <button

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Plus,
   BookOpen,
   MoreVertical,
@@ -37,9 +36,10 @@ export default function SubjectsPage() {
   const [showForm, setShowForm] = useState(false);
 
   const [form, setForm] = useState({
-    name: "",
-    coefficient: "",
-  });
+  name: "",
+  code: "",
+  coefficient: "",
+});
 
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
@@ -142,6 +142,7 @@ export default function SubjectsPage() {
 
     setForm({
       name: "",
+      code: "",
       coefficient: "",
     });
 
@@ -182,23 +183,32 @@ export default function SubjectsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
+       body: JSON.stringify({
           name: form.name.trim(),
           coefficient,
           classroomId: selectedClassId,
         }),
       });
 
-      const data = await response.json();
+       let data = null;
+
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to create subject");
+        throw new Error(
+          data?.error || "Failed to create subject"
+        );
       }
 
       setSubjects((previous) => [...previous, data.subject]);
 
       setForm({
         name: "",
+        code:"",
         coefficient: "",
       });
 
@@ -589,6 +599,8 @@ export default function SubjectsPage() {
 
               </div>
 
+
+                 
               {/* COEFFICIENT */}
 
               <div>
