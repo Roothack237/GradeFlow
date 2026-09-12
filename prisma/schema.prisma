@@ -110,6 +110,7 @@ model User {
   aiConversations   AIConversation[]
   auditLogs         AuditLog[]
   publishedResults  ResultPublication[]
+  publishedSequences SequencePublication[]
   forumPosts        ForumPost[]        @relation("ForumPostAuthor")
   forumComments     ForumComment[]     @relation("ForumCommentAuthor")
   forumReactions    ForumReaction[]    @relation("ForumReactionUser")
@@ -205,10 +206,11 @@ model Classroom {
 
   section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
-  assignments        TeacherAssignment[]
-  timetable          Timetable[]
-  students           Student[]
-  resultPublications ResultPublication[]
+  assignments         TeacherAssignment[]
+  timetable           Timetable[]
+  students            Student[]
+  resultPublications  ResultPublication[]
+  sequencePublications SequencePublication[]
 
   @@index([sectionId])
   @@index([name])
@@ -341,6 +343,8 @@ model Sequence {
 
   marks Mark[]
 
+  sequencePublications SequencePublication[]
+
   termId String
 
   term Term @relation(fields: [termId], references: [id])
@@ -468,6 +472,32 @@ model ResultPublication {
 
   @@unique([termId, classroomId])
   @@index([termId])
+  @@index([classroomId])
+  @@index([status])
+}
+
+model SequencePublication {
+  id String @id @default(cuid())
+
+  sequenceId  String
+  classroomId String
+
+  status PublicationStatus @default(DRAFT)
+
+  publishedById String?
+  publishedAt   DateTime?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sequence    Sequence  @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+
+  @@unique([sequenceId, classroomId])
+  @@index([sequenceId])
   @@index([classroomId])
   @@index([status])
 }
