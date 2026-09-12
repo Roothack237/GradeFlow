@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { sendParentLoginCode } from "@/lib/email";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // ============================================================
 // GENERATE PARENT ID
@@ -23,6 +24,9 @@ function generatePin() {
 // ============================================================
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const parents = await prisma.parent.findMany({
       include: {
@@ -49,6 +53,9 @@ export async function GET() {
 // ============================================================
 
 export async function POST(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
 
@@ -246,6 +253,10 @@ export async function POST(request: NextRequest) {
     // ========================================================
 
     try {
+      if (!result.parent.email) {
+        throw new Error("Parent email is missing.");
+      }
+
       console.log(
         `Sending login code to ${result.parent.email}...`
       );

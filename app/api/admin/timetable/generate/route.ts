@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 import {
   Role,
   WeekDay,
@@ -117,6 +118,9 @@ function overlaps(
 // ======================================================
 
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     // --------------------------------------------------
     // Authentication

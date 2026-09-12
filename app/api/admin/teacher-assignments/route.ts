@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // GET all teacher assignments
 export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const assignments = await prisma.teacherAssignment.findMany({
       orderBy: {
@@ -65,6 +69,9 @@ export async function GET() {
 
 // CREATE teacher assignments
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
 
@@ -290,6 +297,9 @@ export async function POST(request: Request) {
 
 // DELETE a teacher assignment
 export async function DELETE(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
 

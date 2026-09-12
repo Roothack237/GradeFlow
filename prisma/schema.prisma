@@ -45,6 +45,12 @@ enum NotificationType {
   INFO
   WARNING
   SUCCESS
+  RESULT_PUBLISHED
+  ATTENDANCE_ALERT
+  MARK_UPDATE
+  ANNOUNCEMENT
+  REPORT_AVAILABLE
+  SYSTEM
 }
 
 enum AvailabilityStatus {
@@ -65,6 +71,23 @@ enum WeekDay {
   FRIDAY
 }
 
+enum PublicationStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+}
+
+enum ForumCategoryScope {
+  ALL
+  STAFF
+  PARENTS
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+}
+
 model User {
   id           String        @id @default(cuid())
   firstName    String
@@ -80,14 +103,24 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  notifications     Notification[]
+  notifications     Notification[]     @relation("NotificationRecipient")
+  sentNotifications Notification[]     @relation("NotificationSender")
   aiRecommendations AIRecommendation[]
   forumMessages     ForumMessage[]
-  administrator     Administrator?
-  teacher           Teacher?
-  parent            Parent?
+  aiConversations   AIConversation[]
+  auditLogs         AuditLog[]
+  publishedResults  ResultPublication[]
+  forumPosts        ForumPost[]        @relation("ForumPostAuthor")
+  forumComments     ForumComment[]     @relation("ForumCommentAuthor")
+  forumReactions    ForumReaction[]    @relation("ForumReactionUser")
+
+  administrator Administrator?
+  teacher       Teacher?
+  parent        Parent?
 
   @@index([email])
+  @@index([role])
+  @@index([status])
 }
 
 model Administrator {
@@ -124,6 +157,9 @@ model Teacher {
   marks        Mark[]
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([fullName])
+  @@index([email])
 }
 
 model Parent {
@@ -147,6 +183,9 @@ model Parent {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([fullName])
+  @@index([email])
 }
 
 model Section {
@@ -166,9 +205,13 @@ model Classroom {
 
   section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
-  assignments TeacherAssignment[]
-  timetable   Timetable[]
-  students    Student[]
+  assignments        TeacherAssignment[]
+  timetable          Timetable[]
+  students           Student[]
+  resultPublications ResultPublication[]
+
+  @@index([sectionId])
+  @@index([name])
 }
 
 model Student {
@@ -197,6 +240,11 @@ model Student {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([classroomId])
+  @@index([parentId])
+  @@index([status])
+  @@index([lastName, firstName])
 }
 
 model Subject {
@@ -219,6 +267,8 @@ model Subject {
   assignments TeacherAssignment[]
 
   timetables Timetable[]
+
+  @@index([name])
 }
 
 model TeacherAssignment {
@@ -237,6 +287,9 @@ model TeacherAssignment {
   createdAt DateTime @default(now())
 
   @@unique([teacherId, sectionId, classroomId, subjectId])
+  @@index([classroomId])
+  @@index([teacherId])
+  @@index([subjectId])
 }
 
 model AcademicYear {
@@ -245,11 +298,15 @@ model AcademicYear {
   startDate DateTime
   endDate   DateTime
 
+  isActive Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   terms      Term[]
   timetables Timetable[]
+
+  @@index([isActive])
 }
 
 model Term {
@@ -258,13 +315,19 @@ model Term {
   name  String
   order Int
 
+  isCurrent Boolean @default(false)
+
   academicYearId String
 
-  reportCards ReportCard[]
-  sequences   Sequence[]
-  timetables  Timetable[]
+  reportCards        ReportCard[]
+  sequences          Sequence[]
+  timetables         Timetable[]
+  resultPublications ResultPublication[]
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  @@index([academicYearId])
+  @@index([isCurrent])
 }
 
 model Sequence {
@@ -281,6 +344,10 @@ model Sequence {
   termId String
 
   term Term @relation(fields: [termId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([termId])
 }
 
 model Attendance {
@@ -306,6 +373,11 @@ model Attendance {
   createdAt DateTime @default(now())
 
   @@unique([studentId, subjectId, date])
+  @@index([studentId])
+  @@index([sequenceId])
+  @@index([teacherId])
+  @@index([date])
+  @@index([status])
 }
 
 model Mark {
@@ -341,6 +413,10 @@ model Mark {
   updatedAt DateTime @updatedAt
 
   @@unique([studentId, subjectId, sequenceId])
+  @@index([studentId])
+  @@index([sequenceId])
+  @@index([subjectId])
+  @@index([teacherId])
 }
 
 model ReportCard {
@@ -367,24 +443,66 @@ model ReportCard {
   createdAt DateTime @default(now())
 
   @@unique([studentId, termId])
+  @@index([termId])
+}
+
+model ResultPublication {
+  id String @id @default(cuid())
+
+  termId      String
+  classroomId String
+
+  status PublicationStatus @default(DRAFT)
+
+  publishedById String?
+  publishedAt   DateTime?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  term        Term      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+
+  @@unique([termId, classroomId])
+  @@index([termId])
+  @@index([classroomId])
+  @@index([status])
 }
 
 model Notification {
   id String @id @default(cuid())
 
-  title String
-
+  title   String
   message String
 
-  type NotificationType
+  type NotificationType @default(INFO)
 
   isRead Boolean @default(false)
 
   userId String
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+
+  senderId String?
+
+  sender User? @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  audience   String?
+  actionUrl  String?
+  relatedType String?
+  relatedId   String?
+
+  archivedAt DateTime?
 
   createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([type])
 }
 
 model Forum {
@@ -411,6 +529,8 @@ model ForumMessage {
   user User @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
+
+  @@index([forumId])
 }
 
 model AIRecommendation {
@@ -425,6 +545,152 @@ model AIRecommendation {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+}
+
+model AIConversation {
+  id String @id @default(cuid())
+
+  title String
+
+  userId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  messages AIMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model AIMessage {
+  id String @id @default(cuid())
+
+  conversationId String
+
+  role AIMessageRole
+
+  content String
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorId   String?
+  actorName String?
+
+  action     String
+  entityType String
+  entityId   String?
+
+  description String
+
+  metadata Json?
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType])
+  @@index([actorId])
+  @@index([action])
+}
+
+model ForumCategory {
+  id String @id @default(cuid())
+
+  name String @unique
+  slug String @unique
+
+  description String?
+
+  scope ForumCategoryScope @default(ALL)
+
+  order Int @default(0)
+
+  isLocked Boolean @default(false)
+
+  posts ForumPost[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model ForumPost {
+  id String @id @default(cuid())
+
+  title String
+  body  String
+
+  categoryId String
+  authorId   String
+
+  isPinned  Boolean @default(false)
+  isLocked  Boolean @default(false)
+  isDeleted Boolean @default(false)
+
+  views Int @default(0)
+
+  category ForumCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  author   User            @relation("ForumPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  comments ForumComment[]
+  reactions ForumReaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([isPinned])
+}
+
+model ForumComment {
+  id String @id @default(cuid())
+
+  body String
+
+  postId   String
+  authorId String
+
+  isDeleted Boolean @default(false)
+
+  post   ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User      @relation("ForumCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([authorId])
+}
+
+model ForumReaction {
+  id String @id @default(cuid())
+
+  type String @default("LIKE")
+
+  postId String
+  userId String
+
+  post ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User      @relation("ForumReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId, type])
+  @@index([postId])
 }
 
 model Timetable {
@@ -449,6 +715,10 @@ model Timetable {
 
   studentId String?
   student   Student? @relation(fields: [studentId], references: [id])
+
+  @@index([classroomId, day])
+  @@index([teacherId, day])
+  @@index([termId])
 }
 
 model TeacherAvailability {

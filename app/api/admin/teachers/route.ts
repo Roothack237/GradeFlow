@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { sendTeacherLoginCode } from "@/lib/email";
+import { requireAdmin } from "@/lib/admin-auth";
 
 function generateTeacherId() {
   return `TCH${Date.now().toString().slice(-6)}`;
@@ -11,6 +12,9 @@ function generateLoginCode() {
 }
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const teachers = await prisma.teacher.findMany({
       orderBy: {
@@ -76,6 +80,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     // ---------------------------------------
     // Read request body

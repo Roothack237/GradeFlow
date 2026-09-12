@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const { id } = await params;
 
@@ -34,14 +38,10 @@ export async function GET(
     }
 
     /*
-     * Get the sections for this academic year.
-     *
-     * This assumes your Section model has academicYearId.
+     * Sections (Anglophone / Francophone) are global in GradeFlow and are
+     * shared by every academic year, so all sections are returned here.
      */
     const sections = await prisma.section.findMany({
-      where: {
-        academicYearId: id,
-      },
       orderBy: [
         {
           name: "asc",

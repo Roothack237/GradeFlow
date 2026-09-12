@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import TeacherSidebar from "./TeacherSidebar";
 import TeacherNavbar from "./TeacherNavbar";
 
@@ -9,18 +8,12 @@ export default function TeacherShell({
 }: {
   children: React.ReactNode;
 }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <TeacherSidebar
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-      />
+      <TeacherSidebar />
 
       <div className="lg:ml-72">
         <TeacherNavbar
-          onMenuClick={() => setSidebarOpen(true)}
           title="Teacher Portal"
           subtitle="Manage your classes, attendance, marks and more"
           teacherName="Teacher"
