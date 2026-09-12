@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 import {
   Role,
   WeekDay,
@@ -85,6 +86,9 @@ function overlaps(
 // ======================================================
 
 export async function GET(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     // --------------------------------------------------
     // AUTHENTICATION
@@ -528,9 +532,7 @@ export async function GET(request: Request) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load timetable data.",
+          "Failed to load timetable data.",
       },
       { status: 500 }
     );
@@ -542,6 +544,9 @@ export async function GET(request: Request) {
 // ======================================================
 
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     // --------------------------------------------------
     // AUTHENTICATION
@@ -1297,9 +1302,7 @@ export async function POST(request: Request) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to generate timetable",
+          "Failed to generate timetable",
       },
       { status: 500 }
     );

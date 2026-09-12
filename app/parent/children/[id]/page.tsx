@@ -19,6 +19,7 @@ import Navbar from "@/components/parent/NavBar";
 
 type Mark = {
   id: string;
+  subjectId?: string;
   ca1: number;
   ca2: number;
   exam: number;
@@ -49,6 +50,7 @@ type Mark = {
 
 type ReportCard = {
   id: string;
+  pdfUrl?: string | null;
   average: number;
   rank: number | null;
   decision: string | null;

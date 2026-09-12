@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
 try {
 const subjects = await prisma.subject.findMany({
 orderBy: {
@@ -19,9 +23,7 @@ console.error("GET SUBJECTS ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to load subjects",
+      "Failed to load subjects",
   },
   { status: 500 }
 );
@@ -31,6 +33,9 @@ return NextResponse.json(
 }
 
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
 try {
 const body = await request.json();
 
@@ -98,9 +103,7 @@ console.error("CREATE SUBJECT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to create subject",
+      "Failed to create subject",
   },
   { status: 500 }
 );

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export async function GET(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -71,7 +75,7 @@ export async function GET(request: NextRequest) {
      * first + last name manually. This makes the verification
      * more tolerant of how the name was entered.
      */
-    let student = students[0];
+    let student: (typeof students)[number] | undefined = students[0];
 
     if (!student) {
       const allStudents = await prisma.student.findMany({

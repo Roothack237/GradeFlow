@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const { id } = await params;
 
@@ -14,7 +18,7 @@ export async function DELETE(
         _count: {
           select: {
             students: true,
-            teacherAssignments: true,
+            assignments: true,
             timetable: true,
           },
         },
@@ -39,7 +43,7 @@ export async function DELETE(
     }
 
     if (
-      classroom._count.teacherAssignments > 0 ||
+      classroom._count.assignments > 0 ||
       classroom._count.timetable > 0
     ) {
       return NextResponse.json(

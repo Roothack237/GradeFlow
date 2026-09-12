@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
@@ -302,7 +302,15 @@ function getSelectedSequence(
   );
 }
 
-export default function TeacherMarksPage() {
+export default function TeacherMarksPageRoute() {
+  return (
+    <Suspense fallback={null}>
+      <TeacherMarksPage />
+    </Suspense>
+  );
+}
+
+function TeacherMarksPage() {
   const searchParams = useSearchParams();
 
   const classIdFromUrl =

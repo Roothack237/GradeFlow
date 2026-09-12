@@ -10,6 +10,11 @@ interface TeacherNavbarProps {
   title: string;
   subtitle: string;
   teacherName?: string;
+  /**
+   * Accepted for compatibility with pages that render the navbar inside a
+   * layout. The teacher sidebar manages its own open state.
+   */
+  onMenuClick?: () => void;
 }
 
 export default function TeacherNavbar({

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // GET all teacher assignments
 export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const assignments = await prisma.teacherAssignment.findMany({
       orderBy: {
@@ -54,9 +58,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load teacher assignments",
+          "Failed to load teacher assignments",
       },
       { status: 500 }
     );
@@ -65,6 +67,9 @@ export async function GET() {
 
 // CREATE teacher assignments
 export async function POST(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
 
@@ -278,7 +283,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error?.message ||
           "Failed to create teacher assignments",
       },
       {
@@ -290,6 +294,9 @@ export async function POST(request: Request) {
 
 // DELETE a teacher assignment
 export async function DELETE(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
 
@@ -348,7 +355,6 @@ export async function DELETE(request: Request) {
     return NextResponse.json(
       {
         error:
-          error?.message ||
           "Failed to remove teacher assignment",
       },
       {

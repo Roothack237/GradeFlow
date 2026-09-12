@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
+import { requireAdmin } from "@/lib/admin-auth";
 
 /*
  * =========================================================
@@ -12,6 +13,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
   try {
     const session = await auth();
 
@@ -42,14 +46,14 @@ export async function GET(
         students: {
           select: {
             id: true,
-            fullName: true,
+            firstName: true,
+            lastName: true,
             matricule: true,
             gender: true,
-            email: true,
+            status: true,
+            dateOfBirth: true,
           },
-          orderBy: {
-            fullName: "asc",
-          },
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
         },
       },
     });
@@ -70,7 +74,10 @@ export async function GET(
         id: classroom.id,
         name: classroom.name,
       },
-      students: classroom.students,
+      students: classroom.students.map((student) => ({
+        ...student,
+        fullName: `${student.firstName} ${student.lastName}`.trim(),
+      })),
       totalStudents: classroom.students.length,
     });
   } catch (error) {

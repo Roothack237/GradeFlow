@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // ============================================================
 // GET ONE PARENT
@@ -9,6 +10,9 @@ export async function GET(
 request: NextRequest,
 { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
 try {
 const { id } = await params;
 
@@ -64,6 +68,9 @@ export async function PUT(
 request: NextRequest,
 { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
 try {
 const { id } = await params;
 
@@ -302,9 +309,7 @@ console.error("UPDATE PARENT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to update parent.",
+      "Failed to update parent.",
   },
   { status: 500 }
 );
@@ -321,6 +326,9 @@ export async function DELETE(
 request: NextRequest,
 { params }: { params: Promise<{ id: string }> }
 ) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
 try {
 const { id } = await params;
 
@@ -380,9 +388,7 @@ console.error("DELETE PARENT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to delete parent.",
+      "Failed to delete parent.",
   },
   { status: 500 }
 );
