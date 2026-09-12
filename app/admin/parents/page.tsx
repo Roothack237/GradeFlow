@@ -2,18 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Users,
+  GraduationCap,
   Mail,
+  Pencil,
   Phone,
   Plus,
-  Pencil,
-  Trash2,
   RefreshCw,
   Search,
-  Eye,
-  X,
+  Trash2,
   UserRound,
-  GraduationCap,
+  Users,
+  X,
 } from "lucide-react";
 
 import AdminShell from "@/components/admin/AdminShell";
@@ -31,9 +30,6 @@ import {
   PageHeader,
   Select,
   StatCard,
-  TableWrap,
-  Td,
-  Th,
   Toast,
 } from "@/components/admin/ui";
 
@@ -43,53 +39,32 @@ import {
 
 type Child = {
   id: string;
+  matricule: string;
   firstName: string;
   lastName: string;
-  matricule: string;
-  classroomId: string | null;
-  classroom?: { id: string; name: string } | null;
+  status: string;
 };
 
 type Parent = {
   id: string;
   parentId: string;
   fullName: string;
-  firstName?: string | null;
   lastName: string;
-  email: string | null;
+  email: string;
   phone: string | null;
   gender: string | null;
   dateOfBirth: string | null;
+  createdAt: string;
   children: Child[];
 };
 
-type StudentOption = {
+type StudentRow = {
   id: string;
-  firstName: string;
-  lastName: string;
+  fullName: string;
   matricule: string;
-  className: string | null;
+  className: string;
   parentId: string | null;
-};
-
-type FormState = {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  gender: string;
-  dateOfBirth: string;
-  children: { studentId: string; name: string }[];
-};
-
-const EMPTY_FORM: FormState = {
-  firstName: "",
-  lastName: "",
-  email: "",
-  phone: "",
-  gender: "",
-  dateOfBirth: "",
-  children: [],
+  parentName: string | null;
 };
 
 /* =========================================================
@@ -98,50 +73,51 @@ const EMPTY_FORM: FormState = {
 
 export default function ParentsPage() {
   const [parents, setParents] = useState<Parent[]>([]);
-  const [students, setStudents] = useState<StudentOption[]>([]);
-
-  const [search, setSearch] = useState("");
-  const [linkFilter, setLinkFilter] = useState("");
-  const [classFilter, setClassFilter] = useState("");
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
+  const [search, setSearch] = useState("");
+  const [linkFilter, setLinkFilter] = useState("");
+  const [genderFilter, setGenderFilter] = useState("");
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Parent | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [childSearch, setChildSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
-  const [detail, setDetail] = useState<Parent | null>(null);
-  const [toDelete, setToDelete] = useState<Parent | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    gender: "",
+    dateOfBirth: "",
+  });
 
-  /* ---------------- load ---------------- */
+  const [selectedChildren, setSelectedChildren] = useState<StudentRow[]>([]);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [studentResults, setStudentResults] = useState<StudentRow[]>([]);
+  const [searchingStudents, setSearchingStudents] = useState(false);
+
+  const [detail, setDetail] = useState<Parent | null>(null);
+  const [parentToDelete, setParentToDelete] = useState<Parent | null>(null);
+  const [working, setWorking] = useState(false);
+
+  /* ---------------- load parents ---------------- */
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      const [parentsRes, studentsRes] = await Promise.all([
-        fetch("/api/admin/parents", { cache: "no-store" }),
-        fetch("/api/admin/students?page=1&pageSize=200", { cache: "no-store" }),
-      ]);
+      const response = await fetch("/api/admin/parents", { cache: "no-store" });
 
-      if (!parentsRes.ok) throw new Error("failed");
+      if (!response.ok) throw new Error("failed");
 
-      const data = await parentsRes.json();
+      const payload = await response.json();
 
-      setParents(data.parents ?? []);
-
-      if (studentsRes.ok) {
-        const studentData = await studentsRes.json();
-
-        setStudents(studentData.students ?? []);
-      }
+      setParents(payload.parents ?? []);
     } catch {
       setError("Unable to load the parents. Please try again.");
     } finally {
@@ -153,118 +129,61 @@ export default function ParentsPage() {
     load();
   }, [load]);
 
-  /* ---------------- derived ---------------- */
+  /* ---------------- student picker ---------------- */
 
-  const classNamesByChild = useMemo(() => {
-    const map = new Map<string, string>();
+  const searchStudents = useCallback(
+    async (term: string) => {
+      try {
+        setSearchingStudents(true);
 
-    for (const student of students) {
-      if (student.className) map.set(student.id, student.className);
-    }
+        const params = new URLSearchParams({ pageSize: "25" });
 
-    return map;
-  }, [students]);
+        if (term.trim()) params.set("search", term.trim());
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
+        // Students already linked to the parent being edited stay selectable,
+        // every other linked student is filtered out below.
+        params.set("withoutParent", "true");
 
-    return parents.filter((parent) => {
-      if (term) {
-        const haystack = [
-          parent.fullName,
-          parent.email ?? "",
-          parent.phone ?? "",
-          parent.parentId,
-          ...parent.children.map((child) => child.firstName),
-          ...parent.children.map((child) => child.lastName),
-          ...parent.children.map((child) => child.matricule),
-        ]
-          .join(" ")
-          .toLowerCase();
+        const response = await fetch(`/api/admin/students?${params}`, {
+          cache: "no-store",
+        });
 
-        if (!haystack.includes(term)) return false;
+        if (!response.ok) throw new Error("failed");
+
+        const payload = await response.json();
+
+        setStudentResults(payload.students ?? []);
+      } catch {
+        setStudentResults([]);
+      } finally {
+        setSearchingStudents(false);
       }
+    },
+    []
+  );
 
-      if (linkFilter === "WITH" && parent.children.length === 0) return false;
+  useEffect(() => {
+    if (!modalOpen) return;
 
-      if (linkFilter === "WITHOUT" && parent.children.length > 0) return false;
+    const timer = setTimeout(() => searchStudents(studentSearch), 300);
 
-      if (classFilter) {
-        if (
-          !parent.children.some(
-            (child) =>
-              child.classroomId === classFilter ||
-              child.classroom?.id === classFilter
-          )
-        ) {
-          return false;
-        }
-      }
+    return () => clearTimeout(timer);
+  }, [modalOpen, studentSearch, searchStudents]);
 
-      return true;
-    });
-  }, [parents, search, linkFilter, classFilter]);
-
-  const stats = useMemo(() => {
-    const linked = parents.reduce(
-      (sum, parent) => sum + parent.children.length,
-      0
-    );
-
-    const withoutParent = students.filter((student) => !student.parentId).length;
-
-    return {
-      total: parents.length,
-      linked,
-      unassigned: withoutParent,
-      average: parents.length
-        ? Math.round((linked / parents.length) * 10) / 10
-        : 0,
-    };
-  }, [parents, students]);
-
-  const classesForFilter = useMemo(() => {
-    const map = new Map<string, string>();
-
-    for (const parent of parents) {
-      for (const child of parent.children) {
-        const id = child.classroomId ?? child.classroom?.id;
-
-        if (id && child.classroom?.name) map.set(id, child.classroom.name);
-      }
-    }
-
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [parents]);
-
-  /* ---------------- form helpers ---------------- */
-
-  const availableStudents = useMemo(() => {
-    const term = childSearch.trim().toLowerCase();
-
-    const selectedIds = new Set(form.children.map((child) => child.studentId));
-
-    return students
-      .filter((student) => {
-        /* students already linked to another parent are not selectable,
-           unless they are already in this form */
-        if (student.parentId && !selectedIds.has(student.id)) return false;
-
-        if (!term) return true;
-
-        return `${student.firstName} ${student.lastName} ${student.matricule} ${
-          student.className ?? ""
-        }`
-          .toLowerCase()
-          .includes(term);
-      })
-      .slice(0, 8);
-  }, [students, childSearch, form.children]);
+  /* ---------------- open modals ---------------- */
 
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
-    setChildSearch("");
+    setForm({
+      firstName: "",
+      lastName: "",
+      email: "",
+      phone: "",
+      gender: "",
+      dateOfBirth: "",
+    });
+    setSelectedChildren([]);
+    setStudentSearch("");
     setFormError("");
     setModalOpen(true);
   }
@@ -273,122 +192,183 @@ export default function ParentsPage() {
     setEditing(parent);
     setForm({
       firstName: parent.fullName.split(" ")[0] ?? "",
-      lastName: parent.lastName ?? parent.fullName.split(" ").slice(1).join(" "),
+      lastName: parent.lastName ?? "",
       email: parent.email ?? "",
       phone: parent.phone ?? "",
-      gender: parent.gender ? parent.gender.toUpperCase() : "",
-      dateOfBirth: parent.dateOfBirth ? parent.dateOfBirth.slice(0, 10) : "",
-      children: parent.children.map((child) => ({
-        studentId: child.id,
-        name: `${child.firstName} ${child.lastName}`.trim(),
-      })),
+      gender: parent.gender ?? "",
+      dateOfBirth: parent.dateOfBirth
+        ? parent.dateOfBirth.slice(0, 10)
+        : "",
     });
-    setChildSearch("");
+    setSelectedChildren(
+      parent.children.map((child) => ({
+        id: child.id,
+        fullName: `${child.firstName} ${child.lastName}`,
+        matricule: child.matricule,
+        className: "",
+        parentId: parent.id,
+        parentName: parent.fullName,
+      }))
+    );
+    setStudentSearch("");
     setFormError("");
     setModalOpen(true);
   }
 
-  async function submit() {
+  /* ---------------- save ---------------- */
+
+  async function save() {
     setFormError("");
 
-    if (
-      !form.firstName.trim() ||
-      !form.lastName.trim() ||
-      !form.email.trim()
-    ) {
-      setFormError("First name, last name and email are required.");
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      setFormError("First name and last name are required.");
       return;
     }
 
-    if (form.children.length === 0) {
-      setFormError("At least one child is required.");
+    if (!form.email.trim()) {
+      setFormError("An email address is required.");
+      return;
+    }
+
+    if (selectedChildren.length === 0) {
+      setFormError(
+        "A parent must be linked to at least one student. Search for the child above."
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const payload = {
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim() || null,
-        gender: form.gender || null,
-        dateOfBirth: form.dateOfBirth || null,
-        children: form.children.map((child) => ({
-          studentId: child.studentId,
-          name: child.name,
-        })),
-      };
+      const endpoint = editing
+        ? `/api/admin/parents/${editing.id}`
+        : "/api/admin/parents";
 
-      const response = await fetch(
-        editing ? `/api/admin/parents/${editing.id}` : "/api/admin/parents",
-        {
-          method: editing ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
+      const response = await fetch(endpoint, {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+          gender: form.gender || undefined,
+          dateOfBirth: form.dateOfBirth || undefined,
+          children: selectedChildren.map((child) => ({
+            studentId: child.id,
+            name: child.fullName,
+          })),
+        }),
+      });
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setFormError(data.error ?? "Unable to save the parent.");
+        setFormError(payload.error ?? "Unable to save the parent.");
         return;
       }
 
       setModalOpen(false);
       setToast(
-        editing
-          ? "Parent updated."
-          : "Parent created. Their login code has been emailed to them."
+        payload.warning
+          ? payload.warning
+          : editing
+            ? "Parent account updated."
+            : "Parent account created."
       );
       await load();
     } catch {
-      setFormError("Unable to save the parent. Please try again.");
+      setFormError("Unable to save the parent.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function confirmDelete() {
-    if (!toDelete) return;
+  /* ---------------- delete ---------------- */
 
-    setDeleting(true);
+  async function remove() {
+    if (!parentToDelete) return;
+
+    setWorking(true);
 
     try {
-      const response = await fetch(`/api/admin/parents/${toDelete.id}`, {
+      const response = await fetch(`/api/admin/parents/${parentToDelete.id}`, {
         method: "DELETE",
       });
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to delete the parent.");
+        setError(payload.error ?? "Unable to delete the parent.");
         return;
       }
 
-      setToast("Parent deleted.");
-      setToDelete(null);
+      setToast("Parent account deleted.");
+      setParentToDelete(null);
+      setDetail(null);
       await load();
     } catch {
       setError("Unable to delete the parent.");
     } finally {
-      setDeleting(false);
+      setWorking(false);
     }
   }
 
+  /* ---------------- derived data ---------------- */
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+    return parents.filter((parent) => {
+      if (term) {
+        const haystack = [
+          parent.fullName,
+          parent.email,
+          parent.parentId,
+          parent.phone ?? "",
+          ...parent.children.map(
+            (child) => `${child.firstName} ${child.lastName} ${child.matricule}`
+          ),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        if (!haystack.includes(term)) return false;
+      }
+
+      if (linkFilter === "LINKED" && parent.children.length === 0) return false;
+      if (linkFilter === "UNLINKED" && parent.children.length > 0) return false;
+      if (genderFilter && parent.gender !== genderFilter) return false;
+
+      return true;
+    });
+  }, [parents, search, linkFilter, genderFilter]);
+
+  const stats = useMemo(() => {
+    const children = parents.reduce(
+      (total, parent) => total + parent.children.length,
+      0
+    );
+
+    return {
+      total: parents.length,
+      linked: parents.filter((parent) => parent.children.length > 0).length,
+      children,
+      withPhone: parents.filter((parent) => Boolean(parent.phone)).length,
+    };
+  }, [parents]);
+
   const activeFilters =
-    (search ? 1 : 0) + (linkFilter ? 1 : 0) + (classFilter ? 1 : 0);
+    (search ? 1 : 0) + (linkFilter ? 1 : 0) + (genderFilter ? 1 : 0);
 
   return (
     <AdminShell
       title="Parents"
-      subtitle="Manage parent and guardian accounts and the students linked to them."
+      subtitle="Manage the parent accounts and the children linked to them."
     >
       <PageHeader
         title="Parents"
-        subtitle="Parent accounts and their children, straight from the database."
+        subtitle="Parent accounts, their contact details and the students they follow."
       >
         <Button variant="secondary" onClick={load} loading={loading}>
           <RefreshCw size={16} />
@@ -410,24 +390,24 @@ export default function ParentsPage() {
           loading={loading}
         />
         <StatCard
-          label="Children linked"
+          label="With children"
           value={stats.linked}
           icon={<GraduationCap size={20} />}
           tone="emerald"
           loading={loading}
         />
         <StatCard
-          label="Students without a parent"
-          value={stats.unassigned}
+          label="Students followed"
+          value={stats.children}
           icon={<UserRound size={20} />}
-          tone={stats.unassigned ? "amber" : "gray"}
+          tone="blue"
           loading={loading}
         />
         <StatCard
-          label="Average children per parent"
-          value={stats.average}
-          icon={<Users size={20} />}
-          tone="blue"
+          label="Phone numbers"
+          value={stats.withPhone}
+          icon={<Phone size={20} />}
+          tone="amber"
           loading={loading}
         />
       </div>
@@ -448,7 +428,7 @@ export default function ParentsPage() {
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search by parent, email, phone or child…"
+              placeholder="Search a parent, email, phone or child…"
               className="pl-10"
             />
           </div>
@@ -458,20 +438,17 @@ export default function ParentsPage() {
             onChange={(event) => setLinkFilter(event.target.value)}
           >
             <option value="">All parents</option>
-            <option value="WITH">With children</option>
-            <option value="WITHOUT">Without children</option>
+            <option value="LINKED">With children</option>
+            <option value="UNLINKED">Without children</option>
           </Select>
 
           <Select
-            value={classFilter}
-            onChange={(event) => setClassFilter(event.target.value)}
+            value={genderFilter}
+            onChange={(event) => setGenderFilter(event.target.value)}
           >
-            <option value="">All classes</option>
-            {classesForFilter.map((classroom) => (
-              <option key={classroom.id} value={classroom.id}>
-                {classroom.name}
-              </option>
-            ))}
+            <option value="">All genders</option>
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
           </Select>
 
           {activeFilters ? (
@@ -480,7 +457,7 @@ export default function ParentsPage() {
               onClick={() => {
                 setSearch("");
                 setLinkFilter("");
-                setClassFilter("");
+                setGenderFilter("");
               }}
             >
               <X size={16} />
@@ -490,113 +467,136 @@ export default function ParentsPage() {
         </div>
       </Card>
 
-      <Card bodyClassName="">
+      <Card bodyClassName="p-0">
         {loading ? (
           <div className="p-5">
-            <LoadingState label="Loading parents…" />
+            <LoadingState label="Loading the parents…" />
           </div>
         ) : filtered.length === 0 ? (
           <div className="p-5">
             <EmptyState
               icon={<Users size={20} />}
-              title="No parents found"
+              title={parents.length === 0 ? "No parent yet" : "No parent found"}
               message={
-                activeFilters
-                  ? "No parent matches the current search and filters."
-                  : "Add the first parent or guardian to get started."
+                parents.length === 0
+                  ? "Create the first parent account to let families follow their children."
+                  : "No parent matches the current filters."
+              }
+              action={
+                parents.length === 0 ? (
+                  <Button onClick={openCreate}>
+                    <Plus size={16} />
+                    Add parent
+                  </Button>
+                ) : undefined
               }
             />
           </div>
         ) : (
-          <TableWrap>
-            <thead>
-              <tr>
-                <Th>Parent</Th>
-                <Th>Contact</Th>
-                <Th>Children</Th>
-                <Th className="text-right">Actions</Th>
-              </tr>
-            </thead>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/60 dark:text-gray-400">
+                  <tr>
+                    <th className="px-4 py-3">Parent</th>
+                    <th className="px-4 py-3">Contact</th>
+                    <th className="px-4 py-3">Children</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
 
-            <tbody>
-              {filtered.map((parent) => (
-                <tr
-                  key={parent.id}
-                  className="transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                >
-                  <Td>
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      {parent.fullName}
-                    </p>
-                    <p className="font-mono text-[11px] text-gray-400">
-                      {parent.parentId}
-                    </p>
-                  </Td>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {filtered.map((parent) => (
+                    <tr
+                      key={parent.id}
+                      className="hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-200">
+                            {parent.fullName
+                              .split(" ")
+                              .map((part) => part[0])
+                              .slice(0, 2)
+                              .join("")}
+                          </span>
 
-                  <Td>
-                    <p className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
-                      <Mail size={13} className="text-gray-400" />
-                      {parent.email ?? "—"}
-                    </p>
-                    {parent.phone ? (
-                      <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                        <Phone size={13} className="text-gray-400" />
-                        {parent.phone}
-                      </p>
-                    ) : null}
-                  </Td>
+                          <div>
+                            <p className="font-semibold text-gray-900 dark:text-white">
+                              {parent.fullName}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {parent.parentId}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
 
-                  <Td>
-                    {parent.children.length === 0 ? (
-                      <Badge tone="amber">No child linked</Badge>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {parent.children.slice(0, 3).map((child) => (
-                          <Badge key={child.id} tone="purple">
-                            {child.firstName} {child.lastName}
-                          </Badge>
-                        ))}
+                      <td className="px-4 py-3">
+                        <p className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300">
+                          <Mail size={13} className="text-gray-400" />
+                          {parent.email}
+                        </p>
+                        <p className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                          <Phone size={13} className="text-gray-400" />
+                          {parent.phone ?? "No phone"}
+                        </p>
+                      </td>
 
-                        {parent.children.length > 3 ? (
-                          <Badge tone="gray">
-                            +{parent.children.length - 3} more
-                          </Badge>
-                        ) : null}
-                      </div>
-                    )}
-                  </Td>
+                      <td className="px-4 py-3">
+                        {parent.children.length === 0 ? (
+                          <Badge tone="amber">Not linked</Badge>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {parent.children.slice(0, 3).map((child) => (
+                              <Badge key={child.id} tone="purple">
+                                {child.firstName} {child.lastName}
+                              </Badge>
+                            ))}
+                            {parent.children.length > 3 ? (
+                              <Badge tone="gray">
+                                +{parent.children.length - 3}
+                              </Badge>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
 
-                  <Td className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDetail(parent)}
-                      >
-                        <Eye size={15} />
-                      </Button>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setDetail(parent)}
+                          >
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEdit(parent)}
+                          >
+                            <Pencil size={15} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setParentToDelete(parent)}
+                          >
+                            <Trash2 size={15} className="text-red-500" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(parent)}
-                      >
-                        <Pencil size={15} />
-                      </Button>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setToDelete(parent)}
-                      >
-                        <Trash2 size={15} className="text-red-500" />
-                      </Button>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </TableWrap>
+            <div className="border-t border-gray-100 px-4 py-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+              Showing {filtered.length} of {parents.length} parent(s)
+            </div>
+          </>
         )}
       </Card>
 
@@ -606,14 +606,14 @@ export default function ParentsPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editing ? "Edit parent" : "Add parent"}
-        subtitle="A parent account always needs at least one verified child."
+        subtitle="The parent receives a login code by email once the account is created."
         size="lg"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={submit} loading={saving}>
+            <Button onClick={save} loading={saving}>
               {editing ? "Save changes" : "Create parent"}
             </Button>
           </div>
@@ -625,148 +625,154 @@ export default function ParentsPage() {
           </div>
         ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="First name" required>
-            <Input
-              value={form.firstName}
-              onChange={(event) =>
-                setForm({ ...form, firstName: event.target.value })
-              }
-            />
-          </Field>
+        <div className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="First name" required>
+              <Input
+                value={form.firstName}
+                onChange={(event) =>
+                  setForm({ ...form, firstName: event.target.value })
+                }
+              />
+            </Field>
 
-          <Field label="Last name" required>
-            <Input
-              value={form.lastName}
-              onChange={(event) =>
-                setForm({ ...form, lastName: event.target.value })
-              }
-            />
-          </Field>
+            <Field label="Last name" required>
+              <Input
+                value={form.lastName}
+                onChange={(event) =>
+                  setForm({ ...form, lastName: event.target.value })
+                }
+              />
+            </Field>
 
-          <Field label="Email" required>
-            <Input
-              type="email"
-              value={form.email}
-              onChange={(event) =>
-                setForm({ ...form, email: event.target.value })
-              }
-            />
-          </Field>
+            <Field label="Email" required>
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm({ ...form, email: event.target.value })
+                }
+              />
+            </Field>
 
-          <Field label="Phone">
-            <Input
-              value={form.phone}
-              onChange={(event) =>
-                setForm({ ...form, phone: event.target.value })
-              }
-            />
-          </Field>
+            <Field label="Phone">
+              <Input
+                value={form.phone}
+                onChange={(event) =>
+                  setForm({ ...form, phone: event.target.value })
+                }
+              />
+            </Field>
 
-          <Field label="Gender">
-            <Select
-              value={form.gender}
-              onChange={(event) =>
-                setForm({ ...form, gender: event.target.value })
-              }
-            >
-              <option value="">Not specified</option>
-              <option value="MALE">Male</option>
-              <option value="FEMALE">Female</option>
-            </Select>
-          </Field>
+            <Field label="Gender">
+              <Select
+                value={form.gender}
+                onChange={(event) =>
+                  setForm({ ...form, gender: event.target.value })
+                }
+              >
+                <option value="">Not specified</option>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+              </Select>
+            </Field>
 
-          <Field label="Date of birth">
-            <Input
-              type="date"
-              value={form.dateOfBirth}
-              onChange={(event) =>
-                setForm({ ...form, dateOfBirth: event.target.value })
-              }
-            />
-          </Field>
-        </div>
-
-        <div className="mt-6">
-          <p className="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-            Children
-          </p>
-
-          {form.children.length ? (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {form.children.map((child) => (
-                <span
-                  key={child.studentId}
-                  className="inline-flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-800 dark:bg-purple-950 dark:text-purple-300"
-                >
-                  {child.name}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        children: form.children.filter(
-                          (entry) => entry.studentId !== child.studentId
-                        ),
-                      })
-                    }
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="mb-3 rounded-xl border border-dashed border-gray-300 p-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              No child linked yet. Search for a student below.
-            </p>
-          )}
-
-          <div className="relative">
-            <Search
-              size={17}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <Input
-              value={childSearch}
-              onChange={(event) => setChildSearch(event.target.value)}
-              placeholder="Search a student by name, matricule or class…"
-              className="pl-10"
-            />
+            <Field label="Date of birth">
+              <Input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(event) =>
+                  setForm({ ...form, dateOfBirth: event.target.value })
+                }
+              />
+            </Field>
           </div>
 
-          <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
-            {availableStudents.length === 0 ? (
-              <p className="p-3 text-xs text-gray-500 dark:text-gray-400">
-                No student available. Students can only be linked once.
+          <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <p className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+              Children ({selectedChildren.length})
+            </p>
+
+            {selectedChildren.length === 0 ? (
+              <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
+                At least one child is required.
               </p>
             ) : (
-              availableStudents.map((student) => (
-                <button
-                  key={student.id}
-                  type="button"
-                  onClick={() =>
-                    setForm({
-                      ...form,
-                      children: [
-                        ...form.children,
-                        {
-                          studentId: student.id,
-                          name: `${student.firstName} ${student.lastName}`.trim(),
-                        },
-                      ],
-                    })
-                  }
-                  className="flex w-full items-center justify-between rounded-xl border border-gray-200 p-3 text-left text-sm transition hover:border-purple-400 hover:bg-purple-50 dark:border-gray-800 dark:hover:border-purple-700 dark:hover:bg-purple-950/30"
-                >
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {student.firstName} {student.lastName}
+              <div className="mb-3 flex flex-wrap gap-2">
+                {selectedChildren.map((child) => (
+                  <span
+                    key={child.id}
+                    className="flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-800 dark:bg-purple-950 dark:text-purple-200"
+                  >
+                    {child.fullName}
+                    {child.matricule ? ` · ${child.matricule}` : ""}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedChildren(
+                          selectedChildren.filter(
+                            (item) => item.id !== child.id
+                          )
+                        )
+                      }
+                      aria-label={`Remove ${child.fullName}`}
+                    >
+                      <X size={13} />
+                    </button>
                   </span>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {student.className ?? "No class"} · {student.matricule}
-                  </span>
-                </button>
-              ))
+                ))}
+              </div>
+            )}
+
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <Input
+                value={studentSearch}
+                onChange={(event) => setStudentSearch(event.target.value)}
+                placeholder="Search a student who is not linked to a parent yet…"
+                className="pl-9"
+              />
+            </div>
+
+            {searchingStudents ? (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Searching…
+              </p>
+            ) : studentResults.length === 0 ? (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                No unlinked student found.
+              </p>
+            ) : (
+              <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                {studentResults
+                  .filter(
+                    (student) =>
+                      !selectedChildren.some((child) => child.id === student.id)
+                  )
+                  .map((student) => (
+                    <button
+                      key={student.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedChildren([...selectedChildren, student])
+                      }
+                      className="flex w-full items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition hover:border-purple-400 hover:bg-purple-50 dark:border-gray-800 dark:hover:border-purple-700 dark:hover:bg-purple-950/30"
+                    >
+                      <span>
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {student.fullName}
+                        </span>
+                        <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          {student.matricule} · {student.className}
+                        </span>
+                      </span>
+                      <Plus size={15} className="text-purple-700" />
+                    </button>
+                  ))}
+              </div>
             )}
           </div>
         </div>
@@ -778,55 +784,89 @@ export default function ParentsPage() {
         open={Boolean(detail)}
         onClose={() => setDetail(null)}
         title={detail?.fullName ?? "Parent"}
-        subtitle={detail ? `Parent ID ${detail.parentId}` : undefined}
+        subtitle={detail?.parentId}
         size="md"
+        footer={
+          detail ? (
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const parent = detail;
+                  setDetail(null);
+                  if (parent) openEdit(parent);
+                }}
+              >
+                <Pencil size={15} />
+                Edit
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => setParentToDelete(detail)}
+              >
+                <Trash2 size={15} />
+                Delete
+              </Button>
+            </div>
+          ) : null
+        }
       >
         {detail ? (
           <div className="space-y-4 text-sm">
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <p className="text-xs text-gray-500 dark:text-gray-400">Email</p>
-                <p className="font-medium text-gray-900 dark:text-white">
-                  {detail.email ?? "—"}
-                </p>
+                <p className="text-gray-900 dark:text-white">{detail.email}</p>
               </div>
-
               <div>
                 <p className="text-xs text-gray-500 dark:text-gray-400">Phone</p>
-                <p className="font-medium text-gray-900 dark:text-white">
+                <p className="text-gray-900 dark:text-white">
                   {detail.phone ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Gender
+                </p>
+                <p className="text-gray-900 dark:text-white">
+                  {detail.gender ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Added on
+                </p>
+                <p className="text-gray-900 dark:text-white">
+                  {new Date(detail.createdAt).toLocaleDateString("en-GB")}
                 </p>
               </div>
             </div>
 
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                Children
+                Children ({detail.children.length})
               </p>
 
               {detail.children.length === 0 ? (
                 <p className="text-gray-500 dark:text-gray-400">
-                  No child linked to this account.
+                  No child is linked to this parent yet.
                 </p>
               ) : (
-                <ul className="space-y-2">
+                <div className="space-y-2">
                   {detail.children.map((child) => (
-                    <li
+                    <div
                       key={child.id}
-                      className="flex items-center justify-between rounded-xl border border-gray-200 p-3 dark:border-gray-800"
+                      className="flex items-center justify-between rounded-xl border border-gray-200 px-3 py-2 dark:border-gray-800"
                     >
                       <span className="font-medium text-gray-900 dark:text-white">
                         {child.firstName} {child.lastName}
                       </span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {child.classroom?.name ??
-                          classNamesByChild.get(child.id) ??
-                          "No class"}{" "}
-                        · {child.matricule}
+                        {child.matricule}
                       </span>
-                    </li>
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
           </div>
@@ -834,17 +874,17 @@ export default function ParentsPage() {
       </Modal>
 
       <ConfirmDialog
-        open={Boolean(toDelete)}
-        onClose={() => setToDelete(null)}
-        onConfirm={confirmDelete}
-        title="Delete parent"
+        open={Boolean(parentToDelete)}
+        onClose={() => setParentToDelete(null)}
+        onConfirm={remove}
+        title="Delete parent account"
         message={
-          toDelete
-            ? `${toDelete.fullName} will be removed, their login disabled and the children unlinked. This cannot be undone.`
+          parentToDelete
+            ? `${parentToDelete.fullName} will be deleted. The linked students keep their records and become unlinked.`
             : ""
         }
         confirmLabel="Delete"
-        loading={deleting}
+        loading={working}
       />
 
       {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}

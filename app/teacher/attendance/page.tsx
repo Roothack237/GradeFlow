@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Check,
@@ -53,7 +53,15 @@ type ApiStudent = {
   gender?: string;
 };
 
-export default function TeacherAttendancePage() {
+export default function TeacherAttendancePageRoute() {
+  return (
+    <Suspense fallback={null}>
+      <TeacherAttendancePage />
+    </Suspense>
+  );
+}
+
+function TeacherAttendancePage() {
   const searchParams = useSearchParams();
 
   /*

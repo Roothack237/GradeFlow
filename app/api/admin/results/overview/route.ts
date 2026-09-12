@@ -6,11 +6,11 @@ import prisma from "@/lib/prisma";
 /**
  * GET /api/admin/results/overview
  * Class and subject performance for a term or a single sequence, plus the
- * "incomplete results" report: students who do not yet have a mark for a
- * subject the class is supposed to be assessed on.
+ * incomplete results report: the (student, subject) pairs that are expected
+ * for the scope but have no mark yet.
  *
- * Query: ?termId=  &sequenceId=  &classroomId=
- * When no term is given the current term is used.
+ * Query: ?termId= &sequenceId= &classroomId=
+ * When neither a term nor a sequence is given, the current term is used.
  */
 export async function GET(request: Request) {
   const guard = await requireAdmin();
@@ -53,28 +53,30 @@ export async function GET(request: Request) {
         scope: { termId, sequenceId, sequences: 0 },
         summary: {
           expected: 0,
-          covered: 0,
           recorded: 0,
           missing: 0,
+          completionRate: null,
           average: null,
           passRate: null,
-          completionRate: null,
+          students: 0,
+          classes: 0,
+          subjects: 0,
         },
         classes: [],
         subjects: [],
         incomplete: [],
         message:
-          "No sequences found for the selected scope. Choose an academic term or sequence.",
+          "No sequence found for this scope. Choose an academic term or sequence.",
       });
     }
 
-    const roomFilter = classroomId ? { classroomId } : {};
+    const roomFilter = classroomId ? { id: classroomId } : {};
 
     /* ---------- data needed for the report ---------- */
 
     const [classrooms, students, assignments, marks] = await Promise.all([
       prisma.classroom.findMany({
-        where: classroomId ? { id: classroomId } : {},
+        where: roomFilter,
         select: {
           id: true,
           name: true,
@@ -85,118 +87,154 @@ export async function GET(request: Request) {
 
       prisma.student.findMany({
         where: classroomId ? { classroomId } : {},
-        select: { id: true, firstName: true, lastName: true, matricule: true, classroomId: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          matricule: true,
+          classroomId: true,
+        },
       }),
 
       prisma.teacherAssignment.findMany({
-        where: roomFilter,
+        where: classroomId ? { classroomId } : {},
         select: { classroomId: true, subjectId: true },
       }),
 
       prisma.mark.findMany({
-        where: { sequenceId: { in: scopeSequenceIds }, student: roomFilter },
+        where: {
+          sequenceId: { in: scopeSequenceIds },
+          ...(classroomId ? { student: { classroomId } } : {}),
+        },
         select: {
           studentId: true,
           subjectId: true,
           average: true,
-          student: { select: { classroomId: true } },
-          subject: { select: { name: true } },
         },
       }),
     ]);
 
-    /* ---------- subject names ---------- */
-
-    const subjectIds = Array.from(new Set(marks.map((mark) => mark.subjectId)));
-    const assignedSubjectIds = Array.from(
-      new Set(assignments.map((assignment) => assignment.subjectId))
+    const subjectIdsInScope = Array.from(
+      new Set([
+        ...marks.map((mark) => mark.subjectId),
+        ...assignments.map((assignment) => assignment.subjectId),
+      ])
     );
 
-    const allSubjectIds = Array.from(
-      new Set([...subjectIds, ...assignedSubjectIds])
-    );
-
-    const subjects = allSubjectIds.length
+    const subjects = subjectIdsInScope.length
       ? await prisma.subject.findMany({
-          where: { id: { in: allSubjectIds } },
+          where: { id: { in: subjectIdsInScope } },
           select: { id: true, name: true, code: true, coefficient: true },
+          orderBy: { name: "asc" },
         })
       : [];
 
     const subjectById = new Map(subjects.map((subject) => [subject.id, subject]));
 
-    /* ---------- aggregation ---------- */
+    /* ---------- aggregations ---------- */
 
     const studentsByClass = new Map<string, typeof students>();
 
     for (const student of students) {
       const list = studentsByClass.get(student.classroomId) ?? [];
+
       list.push(student);
       studentsByClass.set(student.classroomId, list);
     }
 
-    // classId -> subjectId -> Set(studentId)
-    const recordedPairs = new Map<string, Map<string, Set<string>>>();
-    // classId -> { total, sum, passed }
-    const classStats = new Map<string, { total: number; sum: number; passed: number }>();
-    // subjectId -> { total, sum, passed, highest, lowest }
-    const subjectStats = new Map<
+    /* classId -> subjectId -> { total, count, passed, students:Set } */
+    const classSubjectStats = new Map<
       string,
-      { total: number; sum: number; passed: number; highest: number; lowest: number }
+      Map<
+        string,
+        { total: number; count: number; passed: number; students: Set<string> }
+      >
     >();
 
-    let totalSum = 0;
-    let totalCount = 0;
-    let totalPassed = 0;
+    const subjectStats = new Map<
+      string,
+      {
+        total: number;
+        count: number;
+        passed: number;
+        highest: number;
+        lowest: number;
+      }
+    >();
+
+    let globalTotal = 0;
+    let globalSum = 0;
+    let globalPassed = 0;
 
     for (const mark of marks) {
-      const classId = mark.student.classroomId;
+      const student = students.find((entry) => entry.id === mark.studentId);
+      const classId = student?.classroomId;
+      const average = mark.average;
 
-      const perSubject =
-        recordedPairs.get(classId) ?? new Map<string, Set<string>>();
-      const set = perSubject.get(mark.subjectId) ?? new Set<string>();
-      set.add(mark.studentId);
-      perSubject.set(mark.subjectId, set);
-      recordedPairs.set(classId, perSubject);
+      globalTotal += 1;
+      globalSum += average;
+      if (average >= 50) globalPassed += 1;
 
-      const cls = classStats.get(classId) ?? { total: 0, sum: 0, passed: 0 };
-      cls.total += 1;
-      cls.sum += mark.average;
-      if (mark.average >= 50) cls.passed += 1;
-      classStats.set(classId, cls);
+      if (classId) {
+        const perSubject =
+          classSubjectStats.get(classId) ??
+          new Map<
+            string,
+            {
+              total: number;
+              count: number;
+              passed: number;
+              students: Set<string>;
+            }
+          >();
 
-      const sub =
-        subjectStats.get(mark.subjectId) ??
-        { total: 0, sum: 0, passed: 0, highest: mark.average, lowest: mark.average };
-      sub.total += 1;
-      sub.sum += mark.average;
-      if (mark.average >= 50) sub.passed += 1;
-      sub.highest = Math.max(sub.highest, mark.average);
-      sub.lowest = Math.min(sub.lowest, mark.average);
-      subjectStats.set(mark.subjectId, sub);
+        const entry = perSubject.get(mark.subjectId) ?? {
+          total: 0,
+          count: 0,
+          passed: 0,
+          students: new Set<string>(),
+        };
 
-      totalSum += mark.average;
-      totalCount += 1;
-      if (mark.average >= 50) totalPassed += 1;
+        entry.total += average;
+        entry.count += 1;
+        if (average >= 50) entry.passed += 1;
+        entry.students.add(mark.studentId);
+
+        perSubject.set(mark.subjectId, entry);
+        classSubjectStats.set(classId, perSubject);
+      }
+
+      const subjectEntry = subjectStats.get(mark.subjectId) ?? {
+        total: 0,
+        count: 0,
+        passed: 0,
+        highest: average,
+        lowest: average,
+      };
+
+      subjectEntry.total += average;
+      subjectEntry.count += 1;
+      if (average >= 50) subjectEntry.passed += 1;
+      subjectEntry.highest = Math.max(subjectEntry.highest, average);
+      subjectEntry.lowest = Math.min(subjectEntry.lowest, average);
+
+      subjectStats.set(mark.subjectId, subjectEntry);
     }
 
-    /* ---------- incomplete detection ---------- */
+    /* ---------- expected vs recorded (student, subject) pairs ---------- */
 
     const expectedSubjectsByClass = new Map<string, Set<string>>();
 
     for (const assignment of assignments) {
       const set =
         expectedSubjectsByClass.get(assignment.classroomId) ?? new Set<string>();
+
       set.add(assignment.subjectId);
       expectedSubjectsByClass.set(assignment.classroomId, set);
     }
 
-    /**
-     * A subject that already has marks for the class is expected too, even when
-     * the teaching assignment has not been recorded. Without this the
-     * completion rate could exceed 100%.
-     */
-    for (const [classId, perSubject] of recordedPairs) {
+    /* a subject that already carries marks for the class is expected too */
+    for (const [classId, perSubject] of classSubjectStats) {
       const set = expectedSubjectsByClass.get(classId) ?? new Set<string>();
 
       for (const subjectId of perSubject.keys()) set.add(subjectId);
@@ -209,27 +247,32 @@ export async function GET(request: Request) {
       className: string;
       subjectId: string;
       subjectName: string;
+      expected: number;
+      recorded: number;
       missing: number;
       students: { id: string; name: string; matricule: string }[];
     }[] = [];
 
-    let expectedTotal = 0;
-    let missingTotal = 0;
+    let expectedPairs = 0;
+    let missingPairs = 0;
 
     for (const classroom of classrooms) {
       const classStudents = studentsByClass.get(classroom.id) ?? [];
-      const expectedSubjects = expectedSubjectsByClass.get(classroom.id) ?? new Set<string>();
+      const expectedSubjects =
+        expectedSubjectsByClass.get(classroom.id) ?? new Set<string>();
 
       for (const subjectId of expectedSubjects) {
-        expectedTotal += classStudents.length;
+        expectedPairs += classStudents.length;
 
-        const recorded = recordedPairs.get(classroom.id)?.get(subjectId) ?? new Set<string>();
+        const recorded =
+          classSubjectStats.get(classroom.id)?.get(subjectId)?.students ??
+          new Set<string>();
 
         const missingStudents = classStudents.filter(
           (student) => !recorded.has(student.id)
         );
 
-        missingTotal += missingStudents.length;
+        missingPairs += missingStudents.length;
 
         if (missingStudents.length > 0) {
           incomplete.push({
@@ -237,8 +280,10 @@ export async function GET(request: Request) {
             className: classroom.name,
             subjectId,
             subjectName: subjectById.get(subjectId)?.name ?? "Unknown subject",
+            expected: classStudents.length,
+            recorded: recorded.size,
             missing: missingStudents.length,
-            students: missingStudents.slice(0, 20).map((student) => ({
+            students: missingStudents.slice(0, 10).map((student) => ({
               id: student.id,
               name: `${student.firstName} ${student.lastName}`.trim(),
               matricule: student.matricule,
@@ -252,6 +297,50 @@ export async function GET(request: Request) {
 
     /* ---------- response ---------- */
 
+    const classes = classrooms.map((classroom) => {
+      const classStudents = studentsByClass.get(classroom.id) ?? [];
+      const perSubject = classSubjectStats.get(classroom.id);
+      const expectedSubjects =
+        expectedSubjectsByClass.get(classroom.id) ?? new Set<string>();
+
+      let total = 0;
+      let sum = 0;
+      let passed = 0;
+
+      if (perSubject) {
+        for (const entry of perSubject.values()) {
+          total += entry.count;
+          sum += entry.total;
+          passed += entry.passed;
+        }
+      }
+
+      const expected = classStudents.length * expectedSubjects.size;
+      const recordedPairs = perSubject
+        ? Array.from(perSubject.values()).reduce(
+            (count, entry) => count + entry.students.size,
+            0
+          )
+        : 0;
+
+      return {
+        id: classroom.id,
+        name: classroom.name,
+        sectionName: classroom.section?.name ?? null,
+        students: classStudents.length,
+        subjects: expectedSubjects.size,
+        expected,
+        recorded: total,
+        covered: recordedPairs,
+        missing: Math.max(0, expected - recordedPairs),
+        average: total ? Math.round((sum / total) * 100) / 100 : null,
+        passRate: total ? Math.round((passed / total) * 1000) / 10 : null,
+        completion: expected
+          ? Math.round((recordedPairs / expected) * 1000) / 10
+          : null,
+      };
+    });
+
     return NextResponse.json({
       scope: {
         termId: termId || null,
@@ -260,62 +349,67 @@ export async function GET(request: Request) {
       },
 
       summary: {
-        expected: expectedTotal,
-        covered: expectedTotal - missingTotal,
-        recorded: totalCount,
-        missing: missingTotal,
-        average: totalCount ? Math.round((totalSum / totalCount) * 100) / 100 : null,
-        passRate: totalCount
-          ? Math.round((totalPassed / totalCount) * 1000) / 10
+        expected: expectedPairs,
+        covered: expectedPairs - missingPairs,
+        recorded: globalTotal,
+        missing: missingPairs,
+        completionRate: expectedPairs
+          ? Math.round(((expectedPairs - missingPairs) / expectedPairs) * 1000) /
+            10
           : null,
-        completionRate: expectedTotal
-          ? Math.round(((expectedTotal - missingTotal) / expectedTotal) * 1000) / 10
+        average: globalTotal
+          ? Math.round((globalSum / globalTotal) * 100) / 100
           : null,
+        passRate: globalTotal
+          ? Math.round((globalPassed / globalTotal) * 1000) / 10
+          : null,
+        students: students.length,
+        classes: classrooms.length,
+        subjects: subjects.length,
       },
 
-      classes: classrooms.map((classroom) => {
-        const stats = classStats.get(classroom.id);
-        const classStudents = studentsByClass.get(classroom.id) ?? [];
+      classes,
+
+      subjects: subjects.map((subject) => {
+        const entry = subjectStats.get(subject.id);
+
+        const expected = classrooms.reduce((count, classroom) => {
+          const expectedSubjects =
+            expectedSubjectsByClass.get(classroom.id) ?? new Set<string>();
+
+          return expectedSubjects.has(subject.id)
+            ? count + (studentsByClass.get(classroom.id)?.length ?? 0)
+            : count;
+        }, 0);
+
+        const covered = Array.from(classSubjectStats.values()).reduce(
+          (count, perSubject) =>
+            count + (perSubject.get(subject.id)?.students.size ?? 0),
+          0
+        );
 
         return {
-          id: classroom.id,
-          name: classroom.name,
-          sectionName: classroom.section?.name ?? null,
-          students: classStudents.length,
-          recorded: stats?.total ?? 0,
-          average: stats?.total
-            ? Math.round((stats.sum / stats.total) * 100) / 100
+          id: subject.id,
+          name: subject.name,
+          code: subject.code,
+          coefficient: subject.coefficient,
+          recorded: entry?.count ?? 0,
+          expected,
+          covered,
+          missing: Math.max(0, expected - covered),
+          average: entry?.count
+            ? Math.round((entry.total / entry.count) * 100) / 100
             : null,
-          passRate: stats?.total
-            ? Math.round((stats.passed / stats.total) * 1000) / 10
+          passRate: entry?.count
+            ? Math.round((entry.passed / entry.count) * 1000) / 10
             : null,
+          highest: entry?.highest ?? null,
+          lowest: entry?.lowest ?? null,
         };
       }),
 
-      subjects: subjects
-        .map((subject) => {
-          const stats = subjectStats.get(subject.id);
-
-          return {
-            id: subject.id,
-            name: subject.name,
-            code: subject.code,
-            coefficient: subject.coefficient,
-            recorded: stats?.total ?? 0,
-            average: stats?.total
-              ? Math.round((stats.sum / stats.total) * 100) / 100
-              : null,
-            passRate: stats?.total
-              ? Math.round((stats.passed / stats.total) * 1000) / 10
-              : null,
-            highest: stats?.highest ?? null,
-            lowest: stats?.lowest ?? null,
-          };
-        })
-        .sort((a, b) => (b.average ?? 0) - (a.average ?? 0)),
-
-      incomplete: incomplete.slice(0, 40),
-      incompleteTotal: incomplete.reduce((sum, entry) => sum + entry.missing, 0),
+      incomplete,
+      incompleteTotal: missingPairs,
     });
   } catch (error) {
     return serverError("ADMIN RESULTS OVERVIEW ERROR", error);

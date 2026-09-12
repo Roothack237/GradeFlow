@@ -3,16 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarRange,
-  CalendarDays,
+  Check,
+  ChevronDown,
   Layers,
-  Plus,
   Pencil,
-  Trash2,
+  Plus,
   RefreshCw,
-  Search,
-  X,
   Star,
-  CheckCircle2,
+  Trash2,
 } from "lucide-react";
 
 import AdminShell from "@/components/admin/AdminShell";
@@ -37,10 +35,17 @@ import {
    TYPES
 ========================================================= */
 
+type AcademicYear = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 type Sequence = {
   id: string;
   name: string;
   order: number;
+  termId: string;
   _count?: { marks: number; attendances: number };
 };
 
@@ -50,178 +55,160 @@ type Term = {
   order: number;
   isCurrent: boolean;
   academicYearId: string;
-  academicYear: { id: string; name: string };
+  academicYear?: { id: string; name: string };
   sequences: Sequence[];
-  _count?: { reportCards: number; resultPublications: number };
-};
-
-type AcademicYear = {
-  id: string;
-  name: string;
-  isActive: boolean;
+  _count?: { marks: number; reportCards: number };
 };
 
 /* =========================================================
    PAGE
 ========================================================= */
 
-export default function TermsPage() {
-  const [terms, setTerms] = useState<Term[]>([]);
-  const [years, setYears] = useState<AcademicYear[]>([]);
+function termMarks(term: Term) {
+  return term.sequences.reduce(
+    (total, sequence) => total + (sequence._count?.marks ?? 0),
+    0
+  );
+}
 
-  const [search, setSearch] = useState("");
-  const [yearFilter, setYearFilter] = useState("");
+export default function TermsPage() {
+  const [years, setYears] = useState<AcademicYear[]>([]);
+  const [selectedYear, setSelectedYear] = useState("");
+  const [terms, setTerms] = useState<Term[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
   const [termModal, setTermModal] = useState(false);
   const [editingTerm, setEditingTerm] = useState<Term | null>(null);
-  const [termForm, setTermForm] = useState({
-    name: "",
-    academicYearId: "",
-    order: "",
-    isCurrent: false,
-  });
+  const [termForm, setTermForm] = useState({ name: "", order: "1" });
+  const [savingTerm, setSavingTerm] = useState(false);
+  const [termError, setTermError] = useState("");
 
   const [sequenceModal, setSequenceModal] = useState(false);
-  const [sequenceParent, setSequenceParent] = useState<Term | null>(null);
+  const [sequenceTerm, setSequenceTerm] = useState<Term | null>(null);
   const [editingSequence, setEditingSequence] = useState<Sequence | null>(null);
-  const [sequenceForm, setSequenceForm] = useState({ name: "", order: "" });
-
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
+  const [sequenceForm, setSequenceForm] = useState({ name: "", order: "1" });
+  const [savingSequence, setSavingSequence] = useState(false);
+  const [sequenceError, setSequenceError] = useState("");
 
   const [termToDelete, setTermToDelete] = useState<Term | null>(null);
-  const [sequenceToDelete, setSequenceToDelete] = useState<{
-    sequence: Sequence;
-    term: Term;
-  } | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [sequenceToDelete, setSequenceToDelete] = useState<Sequence | null>(null);
+  const [working, setWorking] = useState(false);
 
   /* ---------------- load ---------------- */
 
-  const load = useCallback(async () => {
+  const loadYears = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/academic-years", {
+        cache: "no-store",
+      });
+
+      if (!response.ok) throw new Error("failed");
+
+      const payload = await response.json();
+      const list: AcademicYear[] = payload.academicYears ?? payload.years ?? [];
+
+      setYears(list);
+      setSelectedYear(
+        (current) =>
+          current || list.find((year) => year.isActive)?.id || list[0]?.id || ""
+      );
+    } catch {
+      setError("Unable to load the academic years.");
+    }
+  }, []);
+
+  const loadTerms = useCallback(async () => {
+    if (!selectedYear) {
+      setTerms([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
 
-      const [termsRes, yearsRes] = await Promise.all([
-        fetch("/api/admin/terms", { cache: "no-store" }),
-        fetch("/api/admin/academic-years", { cache: "no-store" }),
+      const [termsResponse, sequencesResponse] = await Promise.all([
+        fetch(`/api/admin/terms?academicYearId=${selectedYear}`, {
+          cache: "no-store",
+        }),
+        fetch(`/api/admin/sequences?academicYearId=${selectedYear}`, {
+          cache: "no-store",
+        }),
       ]);
 
-      if (!termsRes.ok) throw new Error("failed");
+      if (!termsResponse.ok || !sequencesResponse.ok) throw new Error("failed");
 
-      const data = await termsRes.json();
+      const termsPayload = await termsResponse.json();
+      const sequencesPayload = await sequencesResponse.json();
 
-      setTerms(data.terms ?? []);
+      const sequences: Sequence[] =
+        sequencesPayload.sequences ?? sequencesPayload ?? [];
 
-      if (yearsRes.ok) {
-        const yearData = await yearsRes.json();
+      const baseTerms: Term[] = termsPayload.terms ?? termsPayload ?? [];
 
-        setYears(yearData.academicYears ?? []);
-      }
+      setTerms(
+        baseTerms.map((term) => ({
+          ...term,
+          sequences: sequences
+            .filter((sequence) => sequence.termId === term.id)
+            .sort((a, b) => a.order - b.order),
+        }))
+      );
     } catch {
-      setError("Unable to load terms and sequences. Please try again.");
+      setError("Unable to load the terms and sequences. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedYear]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadYears();
+  }, [loadYears]);
 
-  /* ---------------- derived ---------------- */
+  useEffect(() => {
+    loadTerms();
+  }, [loadTerms]);
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
+  const refresh = useCallback(async () => {
+    await Promise.all([loadYears(), loadTerms()]);
+  }, [loadYears, loadTerms]);
 
-    return terms.filter((entry) => {
-      if (yearFilter && entry.academicYearId !== yearFilter) return false;
-
-      if (!term) return true;
-
-      return (
-        entry.name.toLowerCase().includes(term) ||
-        entry.academicYear.name.toLowerCase().includes(term) ||
-        entry.sequences.some((sequence) =>
-          sequence.name.toLowerCase().includes(term)
-        )
-      );
-    });
-  }, [terms, search, yearFilter]);
-
-  const stats = useMemo(() => {
-    const sequences = terms.reduce(
-      (sum, entry) => sum + entry.sequences.length,
-      0
-    );
-
-    const marks = terms.reduce(
-      (sum, entry) =>
-        sum +
-        entry.sequences.reduce(
-          (inner, sequence) => inner + (sequence._count?.marks ?? 0),
-          0
-        ),
-      0
-    );
-
-    const current = terms.find((entry) => entry.isCurrent);
-
-    return {
-      terms: terms.length,
-      sequences,
-      marks,
-      current: current ? `${current.name} · ${current.academicYear.name}` : "—",
-    };
-  }, [terms]);
-
-  /* ---------------- term actions ---------------- */
+  /* ---------------- terms ---------------- */
 
   function openCreateTerm() {
-    const active = years.find((year) => year.isActive) ?? years[0];
-
     setEditingTerm(null);
-    setTermForm({
-      name: "",
-      academicYearId: active?.id ?? "",
-      order: "",
-      isCurrent: false,
-    });
-    setFormError("");
+    setTermForm({ name: "", order: String(terms.length + 1) });
+    setTermError("");
     setTermModal(true);
   }
 
   function openEditTerm(term: Term) {
     setEditingTerm(term);
-    setTermForm({
-      name: term.name,
-      academicYearId: term.academicYearId,
-      order: String(term.order),
-      isCurrent: term.isCurrent,
-    });
-    setFormError("");
+    setTermForm({ name: term.name, order: String(term.order) });
+    setTermError("");
     setTermModal(true);
   }
 
   async function saveTerm() {
-    setFormError("");
+    setTermError("");
 
     if (!termForm.name.trim()) {
-      setFormError("A term name is required.");
+      setTermError("A term name is required.");
       return;
     }
 
-    if (!editingTerm && !termForm.academicYearId) {
-      setFormError("An academic year is required.");
+    if (!selectedYear) {
+      setTermError("Select an academic year first.");
       return;
     }
 
-    setSaving(true);
+    setSavingTerm(true);
 
     try {
       const response = await fetch(
@@ -231,33 +218,32 @@ export default function TermsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: termForm.name.trim(),
-            ...(editingTerm
-              ? {}
-              : { academicYearId: termForm.academicYearId }),
-            ...(termForm.order ? { order: Number(termForm.order) } : {}),
-            isCurrent: termForm.isCurrent,
+            order: Number(termForm.order) || 1,
+            ...(editingTerm ? {} : { academicYearId: selectedYear }),
           }),
         }
       );
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setFormError(data.error ?? "Unable to save the term.");
+        setTermError(payload.error ?? "Unable to save the term.");
         return;
       }
 
       setTermModal(false);
       setToast(editingTerm ? "Term updated." : "Term created.");
-      await load();
+      await refresh();
     } catch {
-      setFormError("Unable to save the term. Please try again.");
+      setTermError("Unable to save the term.");
     } finally {
-      setSaving(false);
+      setSavingTerm(false);
     }
   }
 
-  async function makeCurrent(term: Term) {
+  async function setCurrentTerm(term: Term) {
+    setWorking(true);
+
     try {
       const response = await fetch(`/api/admin/terms/${term.id}`, {
         method: "PATCH",
@@ -265,74 +251,81 @@ export default function TermsPage() {
         body: JSON.stringify({ isCurrent: true }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to set the current term.");
+        setError(payload.error ?? "Unable to set the current term.");
         return;
       }
 
       setToast(`${term.name} is now the current term.`);
-      await load();
+      await loadTerms();
     } catch {
       setError("Unable to set the current term.");
+    } finally {
+      setWorking(false);
     }
   }
 
-  async function confirmDeleteTerm() {
+  async function deleteTerm() {
     if (!termToDelete) return;
 
-    setDeleting(true);
+    setWorking(true);
 
     try {
       const response = await fetch(`/api/admin/terms/${termToDelete.id}`, {
         method: "DELETE",
       });
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to delete the term.");
+        setError(payload.error ?? "Unable to delete the term.");
         return;
       }
 
       setToast("Term deleted.");
       setTermToDelete(null);
-      await load();
+      await loadTerms();
     } catch {
       setError("Unable to delete the term.");
     } finally {
-      setDeleting(false);
+      setWorking(false);
     }
   }
 
-  /* ---------------- sequence actions ---------------- */
+  /* ---------------- sequences ---------------- */
 
   function openCreateSequence(term: Term) {
-    setSequenceParent(term);
+    setSequenceTerm(term);
     setEditingSequence(null);
-    setSequenceForm({ name: "", order: "" });
-    setFormError("");
+    setSequenceForm({
+      name: "",
+      order: String((term.sequences?.length ?? 0) + 1),
+    });
+    setSequenceError("");
     setSequenceModal(true);
   }
 
   function openEditSequence(term: Term, sequence: Sequence) {
-    setSequenceParent(term);
+    setSequenceTerm(term);
     setEditingSequence(sequence);
     setSequenceForm({ name: sequence.name, order: String(sequence.order) });
-    setFormError("");
+    setSequenceError("");
     setSequenceModal(true);
   }
 
   async function saveSequence() {
-    setFormError("");
+    setSequenceError("");
 
     if (!sequenceForm.name.trim()) {
-      setFormError("A sequence name is required.");
+      setSequenceError("A sequence name is required.");
       return;
     }
 
-    setSaving(true);
+    if (!sequenceTerm) return;
+
+    setSavingSequence(true);
 
     try {
       const response = await fetch(
@@ -344,74 +337,94 @@ export default function TermsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: sequenceForm.name.trim(),
-            ...(editingSequence ? {} : { termId: sequenceParent?.id }),
-            ...(sequenceForm.order ? { order: Number(sequenceForm.order) } : {}),
+            order: Number(sequenceForm.order) || 1,
+            ...(editingSequence ? {} : { termId: sequenceTerm.id }),
           }),
         }
       );
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setFormError(data.error ?? "Unable to save the sequence.");
+        setSequenceError(payload.error ?? "Unable to save the sequence.");
         return;
       }
 
       setSequenceModal(false);
       setToast(editingSequence ? "Sequence updated." : "Sequence created.");
-      await load();
+      await loadTerms();
     } catch {
-      setFormError("Unable to save the sequence. Please try again.");
+      setSequenceError("Unable to save the sequence.");
     } finally {
-      setSaving(false);
+      setSavingSequence(false);
     }
   }
 
-  async function confirmDeleteSequence() {
+  async function deleteSequence() {
     if (!sequenceToDelete) return;
 
-    setDeleting(true);
+    setWorking(true);
 
     try {
       const response = await fetch(
-        `/api/admin/sequences/${sequenceToDelete.sequence.id}`,
+        `/api/admin/sequences/${sequenceToDelete.id}`,
         { method: "DELETE" }
       );
 
-      const data = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setError(data.error ?? "Unable to delete the sequence.");
+        setError(payload.error ?? "Unable to delete the sequence.");
         return;
       }
 
       setToast("Sequence deleted.");
       setSequenceToDelete(null);
-      await load();
+      await loadTerms();
     } catch {
       setError("Unable to delete the sequence.");
     } finally {
-      setDeleting(false);
+      setWorking(false);
     }
   }
+
+  /* ---------------- derived ---------------- */
+
+  const stats = useMemo(() => {
+    const sequences = terms.reduce(
+      (total, term) => total + term.sequences.length,
+      0
+    );
+
+    const current = terms.find((term) => term.isCurrent);
+
+    return {
+      terms: terms.length,
+      sequences,
+      current: current?.name ?? "—",
+      withMarks: terms.filter((term) =>
+        term.sequences.some((sequence) => (sequence._count?.marks ?? 0) > 0)
+      ).length,
+    };
+  }, [terms]);
 
   return (
     <AdminShell
       title="Terms & Sequences"
-      subtitle="Organise the academic calendar into terms and sequences."
+      subtitle="Organise the academic year into terms and sequences."
     >
       <PageHeader
         title="Terms & Sequences"
-        subtitle="Terms belong to an academic year; each term is split into sequences."
+        subtitle="Terms group the sequences, and results can be published per term or per sequence."
       >
-        <Button variant="secondary" onClick={load} loading={loading}>
+        <Button variant="secondary" onClick={refresh} loading={loading}>
           <RefreshCw size={16} />
           Refresh
         </Button>
 
-        <Button onClick={openCreateTerm} disabled={years.length === 0}>
+        <Button onClick={openCreateTerm} disabled={!selectedYear}>
           <Plus size={16} />
-          Add term
+          New term
         </Button>
       </PageHeader>
 
@@ -431,16 +444,16 @@ export default function TermsPage() {
           loading={loading}
         />
         <StatCard
-          label="Marks recorded"
-          value={stats.marks}
-          icon={<CheckCircle2 size={20} />}
+          label="Current term"
+          value={stats.current}
+          icon={<Star size={20} />}
           tone="emerald"
           loading={loading}
         />
         <StatCard
-          label="Current term"
-          value={stats.current}
-          icon={<Star size={20} />}
+          label="Terms with marks"
+          value={stats.withMarks}
+          icon={<Check size={20} />}
           tone="amber"
           loading={loading}
         />
@@ -448,171 +461,206 @@ export default function TermsPage() {
 
       {error ? (
         <div className="mb-5">
-          <ErrorState message={error} onRetry={load} />
+          <ErrorState message={error} onRetry={refresh} />
         </div>
       ) : null}
 
       <Card bodyClassName="p-4" className="mb-5">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="relative sm:col-span-2">
-            <Search
-              size={17}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search a term, year or sequence…"
-              className="pl-10"
-            />
-          </div>
-
-          <Select
-            value={yearFilter}
-            onChange={(event) => setYearFilter(event.target.value)}
-          >
-            <option value="">All academic years</option>
-            {years.map((year) => (
-              <option key={year.id} value={year.id}>
-                {year.name}
-                {year.isActive ? " (active)" : ""}
-              </option>
-            ))}
-          </Select>
-
-          {search || yearFilter ? (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setSearch("");
-                setYearFilter("");
-              }}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Academic year">
+            <Select
+              value={selectedYear}
+              onChange={(event) => setSelectedYear(event.target.value)}
             >
-              <X size={16} />
-              Clear filters
-            </Button>
-          ) : null}
+              <option value="">Select an academic year</option>
+              {years.map((year) => (
+                <option key={year.id} value={year.id}>
+                  {year.name}
+                  {year.isActive ? " (active)" : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
       </Card>
 
       {loading ? (
-        <Card title="Loading terms">
-          <LoadingState label="Loading terms and sequences…" />
+        <Card title="Terms">
+          <LoadingState label="Loading the terms…" />
         </Card>
-      ) : filtered.length === 0 ? (
-        <Card>
+      ) : terms.length === 0 ? (
+        <Card title="Terms">
           <EmptyState
-            icon={<CalendarDays size={20} />}
-            title="No terms found"
-            message={
-              terms.length === 0
-                ? "Create a term inside an academic year to get started."
-                : "No term matches the current filters."
+            icon={<CalendarRange size={20} />}
+            title="No term yet"
+            message="Create the first term for the selected academic year."
+            action={
+              <Button onClick={openCreateTerm} disabled={!selectedYear}>
+                <Plus size={16} />
+                New term
+              </Button>
             }
           />
         </Card>
       ) : (
-        <div className="space-y-5">
-          {filtered.map((term) => (
-            <Card
-              key={term.id}
-              title={term.name}
-              description={`${term.academicYear.name} · term ${term.order}${
-                term._count
-                  ? ` · ${term._count.reportCards} report card(s)`
-                  : ""
-              }`}
-              action={
-                <div className="flex flex-wrap items-center gap-2">
-                  {term.isCurrent ? (
-                    <Badge tone="green">Current term</Badge>
-                  ) : (
+        <div className="space-y-4">
+          {terms.map((term) => {
+            const isOpen = expanded[term.id] !== false;
+
+            return (
+              <Card key={term.id} bodyClassName="p-0">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-gray-800">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-gray-900 dark:text-white">
+                        {term.name}
+                      </p>
+
+                      {term.isCurrent ? (
+                        <Badge tone="green">
+                          <Star size={11} /> Current
+                        </Badge>
+                      ) : null}
+
+                      <Badge tone="gray">Order {term.order}</Badge>
+
+                      <Badge tone="purple">
+                        {term.sequences.length} sequence(s)
+                      </Badge>
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {term.academicYear?.name ?? ""} ·{" "}
+                      {termMarks(term)} mark(s) ·{" "}
+                      {term._count?.reportCards ?? 0} report card(s)
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1">
+                    {!term.isCurrent ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setCurrentTerm(term)}
+                        loading={working}
+                      >
+                        <Star size={14} />
+                        Set current
+                      </Button>
+                    ) : null}
+
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => makeCurrent(term)}
+                      onClick={() => openCreateSequence(term)}
                     >
-                      <Star size={14} />
-                      Set current
+                      <Plus size={14} />
+                      Sequence
                     </Button>
-                  )}
 
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openCreateSequence(term)}
-                  >
-                    <Plus size={14} />
-                    Sequence
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openEditTerm(term)}
-                  >
-                    <Pencil size={15} />
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setTermToDelete(term)}
-                  >
-                    <Trash2 size={15} className="text-red-500" />
-                  </Button>
-                </div>
-              }
-            >
-              {term.sequences.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                  No sequence yet. Add the sequences that split this term.
-                </p>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {term.sequences.map((sequence) => (
-                    <div
-                      key={sequence.id}
-                      className="rounded-xl border border-gray-200 p-3 dark:border-gray-800"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditTerm(term)}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                            {sequence.name}
-                          </p>
-                          <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                            Order {sequence.order} ·{" "}
-                            {sequence._count?.marks ?? 0} mark(s) ·{" "}
-                            {sequence._count?.attendances ?? 0} attendance
-                          </p>
-                        </div>
+                      <Pencil size={15} />
+                    </Button>
 
-                        <div className="flex gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEditSequence(term, sequence)}
-                          >
-                            <Pencil size={14} />
-                          </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setTermToDelete(term)}
+                    >
+                      <Trash2 size={15} className="text-red-500" />
+                    </Button>
 
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setSequenceToDelete({ sequence, term })
-                            }
-                          >
-                            <Trash2 size={14} className="text-red-500" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setExpanded({ ...expanded, [term.id]: !isOpen })
+                      }
+                      title={isOpen ? "Collapse" : "Expand"}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className={`transition-transform ${
+                          isOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </Button>
+                  </div>
                 </div>
-              )}
-            </Card>
-          ))}
+
+                {isOpen ? (
+                  term.sequences.length === 0 ? (
+                    <div className="p-4">
+                      <EmptyState
+                        icon={<Layers size={20} />}
+                        title="No sequence in this term"
+                        message="Add a sequence so teachers can record marks."
+                      />
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[640px] text-sm">
+                        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-800/60 dark:text-gray-400">
+                          <tr>
+                            <th className="px-4 py-2">Sequence</th>
+                            <th className="px-4 py-2">Order</th>
+                            <th className="px-4 py-2">Marks</th>
+                            <th className="px-4 py-2">Attendance</th>
+                            <th className="px-4 py-2 text-right">Actions</th>
+                          </tr>
+                        </thead>
+
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                          {term.sequences.map((sequence) => (
+                            <tr key={sequence.id}>
+                              <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">
+                                {sequence.name}
+                              </td>
+                              <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                                {sequence.order}
+                              </td>
+                              <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                                {sequence._count?.marks ?? 0}
+                              </td>
+                              <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                                {sequence._count?.attendances ?? 0}
+                              </td>
+                              <td className="px-4 py-2">
+                                <div className="flex justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      openEditSequence(term, sequence)
+                                    }
+                                  >
+                                    <Pencil size={14} />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      setSequenceToDelete(sequence)
+                                    }
+                                  >
+                                    <Trash2 size={14} className="text-red-500" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                ) : null}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -621,27 +669,27 @@ export default function TermsPage() {
       <Modal
         open={termModal}
         onClose={() => setTermModal(false)}
-        title={editingTerm ? "Edit term" : "Add term"}
+        title={editingTerm ? "Edit term" : "New term"}
         size="md"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setTermModal(false)}>
               Cancel
             </Button>
-            <Button onClick={saveTerm} loading={saving}>
+            <Button onClick={saveTerm} loading={savingTerm}>
               {editingTerm ? "Save changes" : "Create term"}
             </Button>
           </div>
         }
       >
-        {formError ? (
+        {termError ? (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-            {formError}
+            {termError}
           </div>
         ) : null}
 
         <div className="space-y-4">
-          <Field label="Term name" required>
+          <Field label="Name" required>
             <Input
               value={termForm.name}
               onChange={(event) =>
@@ -651,49 +699,16 @@ export default function TermsPage() {
             />
           </Field>
 
-          {!editingTerm ? (
-            <Field label="Academic year" required>
-              <Select
-                value={termForm.academicYearId}
-                onChange={(event) =>
-                  setTermForm({
-                    ...termForm,
-                    academicYearId: event.target.value,
-                  })
-                }
-              >
-                <option value="">Select an academic year</option>
-                {years.map((year) => (
-                  <option key={year.id} value={year.id}>
-                    {year.name}
-                    {year.isActive ? " (active)" : ""}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          ) : null}
-
-          <Field label="Order" hint="Leave empty to append the term.">
+          <Field label="Order" hint="Lower numbers appear first.">
             <Input
               type="number"
+              min={1}
               value={termForm.order}
               onChange={(event) =>
                 setTermForm({ ...termForm, order: event.target.value })
               }
             />
           </Field>
-
-          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <input
-              type="checkbox"
-              checked={termForm.isCurrent}
-              onChange={(event) =>
-                setTermForm({ ...termForm, isCurrent: event.target.checked })
-              }
-              className="h-4 w-4 rounded border-gray-300 text-purple-700 focus:ring-purple-500"
-            />
-            Make this the current term
-          </label>
         </div>
       </Modal>
 
@@ -702,28 +717,28 @@ export default function TermsPage() {
       <Modal
         open={sequenceModal}
         onClose={() => setSequenceModal(false)}
-        title={editingSequence ? "Edit sequence" : "Add sequence"}
-        subtitle={sequenceParent ? `In ${sequenceParent.name}` : undefined}
+        title={editingSequence ? "Edit sequence" : "New sequence"}
+        subtitle={sequenceTerm?.name}
         size="md"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setSequenceModal(false)}>
               Cancel
             </Button>
-            <Button onClick={saveSequence} loading={saving}>
+            <Button onClick={saveSequence} loading={savingSequence}>
               {editingSequence ? "Save changes" : "Create sequence"}
             </Button>
           </div>
         }
       >
-        {formError ? (
+        {sequenceError ? (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-            {formError}
+            {sequenceError}
           </div>
         ) : null}
 
         <div className="space-y-4">
-          <Field label="Sequence name" required>
+          <Field label="Name" required>
             <Input
               value={sequenceForm.name}
               onChange={(event) =>
@@ -733,9 +748,10 @@ export default function TermsPage() {
             />
           </Field>
 
-          <Field label="Order" hint="Leave empty to append the sequence.">
+          <Field label="Order" hint="Lower numbers appear first.">
             <Input
               type="number"
+              min={1}
               value={sequenceForm.order}
               onChange={(event) =>
                 setSequenceForm({ ...sequenceForm, order: event.target.value })
@@ -748,29 +764,29 @@ export default function TermsPage() {
       <ConfirmDialog
         open={Boolean(termToDelete)}
         onClose={() => setTermToDelete(null)}
-        onConfirm={confirmDeleteTerm}
+        onConfirm={deleteTerm}
         title="Delete term"
         message={
           termToDelete
-            ? `${termToDelete.name} and its sequences will be deleted. Terms that already hold marks, attendance or publications cannot be removed.`
+            ? `${termToDelete.name} and its ${termToDelete.sequences.length} sequence(s) will be deleted. Terms that already hold results or report cards cannot be removed.`
             : ""
         }
         confirmLabel="Delete"
-        loading={deleting}
+        loading={working}
       />
 
       <ConfirmDialog
         open={Boolean(sequenceToDelete)}
         onClose={() => setSequenceToDelete(null)}
-        onConfirm={confirmDeleteSequence}
+        onConfirm={deleteSequence}
         title="Delete sequence"
         message={
           sequenceToDelete
-            ? `${sequenceToDelete.sequence.name} will be deleted from ${sequenceToDelete.term.name}. Sequences that already hold marks or attendance cannot be removed.`
+            ? `${sequenceToDelete.name} will be deleted. Sequences that already hold marks or attendance cannot be removed.`
             : ""
         }
         confirmLabel="Delete"
-        loading={deleting}
+        loading={working}
       />
 
       {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}

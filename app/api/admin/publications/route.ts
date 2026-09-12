@@ -7,11 +7,11 @@ import prisma from "@/lib/prisma";
 
 /**
  * GET /api/admin/publications
- * Publication state for a term, per class, at both levels:
- *   - term level   (ResultPublication)
- *   - sequence level (SequencePublication)
+ * Publication state of a term for every class, at both levels:
+ *   - the term publication        (class x term)
+ *   - the sequence publications   (class x sequence)
  *
- * Query: ?termId=   (defaults to the current term)
+ * Query: ?termId= &classroomId=
  */
 export async function GET(request: Request) {
   const guard = await requireAdmin();
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
 
     let termId = str(searchParams.get("termId"));
+    const classroomId = str(searchParams.get("classroomId"));
 
     if (!termId) {
       const current = await prisma.term.findFirst({
@@ -34,41 +35,48 @@ export async function GET(request: Request) {
     if (!termId) {
       return NextResponse.json({
         term: null,
-        sequences: [],
         classes: [],
-        message: "No current term is set. Choose a term to manage its results.",
+        summary: { classes: 0, sequences: 0, published: 0, pending: 0 },
+        message: "No term is available yet.",
       });
     }
 
-    const [term, classrooms, termPublications, sequencePublications] =
+    const term = await prisma.term.findUnique({
+      where: { id: termId },
+      select: {
+        id: true,
+        name: true,
+        order: true,
+        isCurrent: true,
+        academicYear: { select: { id: true, name: true } },
+        sequences: {
+          orderBy: { order: "asc" },
+          select: { id: true, name: true, order: true },
+        },
+      },
+    });
+
+    if (!term) {
+      return NextResponse.json({ error: "Term not found." }, { status: 404 });
+    }
+
+    const classrooms = await prisma.classroom.findMany({
+      where: classroomId ? { id: classroomId } : {},
+      select: {
+        id: true,
+        name: true,
+        section: { select: { id: true, name: true } },
+        _count: { select: { students: true } },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    const classroomIds = classrooms.map((classroom) => classroom.id);
+
+    const [termPublications, sequencePublications, markGroups] =
       await Promise.all([
-        prisma.term.findUnique({
-          where: { id: termId },
-          select: {
-            id: true,
-            name: true,
-            order: true,
-            isCurrent: true,
-            academicYear: { select: { id: true, name: true } },
-            sequences: {
-              orderBy: { order: "asc" },
-              select: { id: true, name: true, order: true },
-            },
-          },
-        }),
-
-        prisma.classroom.findMany({
-          select: {
-            id: true,
-            name: true,
-            section: { select: { name: true } },
-            _count: { select: { students: true } },
-          },
-          orderBy: { name: "asc" },
-        }),
-
         prisma.resultPublication.findMany({
-          where: { termId },
+          where: { termId, classroomId: { in: classroomIds } },
           select: {
             classroomId: true,
             status: true,
@@ -79,20 +87,55 @@ export async function GET(request: Request) {
         }),
 
         prisma.sequencePublication.findMany({
-          where: { sequence: { termId } },
+          where: {
+            classroomId: { in: classroomIds },
+            sequence: { termId },
+          },
           select: {
-            sequenceId: true,
             classroomId: true,
+            sequenceId: true,
             status: true,
             publishedAt: true,
           },
         }),
+
+        prisma.mark.groupBy({
+          by: ["studentId"],
+          where: {
+            sequence: { termId },
+            student: { classroomId: { in: classroomIds } },
+          },
+          _count: { _all: true },
+        }),
       ]);
 
-    if (!term) {
-      return NextResponse.json(
-        { error: "Term not found." },
-        { status: 404 }
+    /* marks per class, resolved through the students of each class */
+
+    const studentsByClass = await prisma.student.groupBy({
+      by: ["classroomId"],
+      where: { classroomId: { in: classroomIds } },
+      _count: { _all: true },
+    });
+
+    const marksByClass = new Map<string, number>();
+
+    const students = await prisma.student.findMany({
+      where: { classroomId: { in: classroomIds } },
+      select: { id: true, classroomId: true },
+    });
+
+    const classByStudent = new Map(
+      students.map((student) => [student.id, student.classroomId])
+    );
+
+    for (const group of markGroups) {
+      const classId = classByStudent.get(group.studentId);
+
+      if (!classId) continue;
+
+      marksByClass.set(
+        classId,
+        (marksByClass.get(classId) ?? 0) + group._count._all
       );
     }
 
@@ -107,38 +150,69 @@ export async function GET(request: Request) {
       ])
     );
 
-    return NextResponse.json({
-      term,
+    let publishedCount = 0;
+    let pendingCount = 0;
 
-      sequences: term.sequences,
+    const classes = classrooms.map((classroom) => {
+      const termPublication = termMap.get(classroom.id);
 
-      classes: classrooms.map((classroom) => {
-        const termLevel = termMap.get(classroom.id);
+      const sequences = term.sequences.map((sequence) => {
+        const publication = sequenceMap.get(`${sequence.id}:${classroom.id}`);
+
+        if (publication?.status === "PUBLISHED") publishedCount += 1;
+        else pendingCount += 1;
 
         return {
-          id: classroom.id,
-          name: classroom.name,
-          sectionName: classroom.section?.name ?? null,
-          students: classroom._count.students,
-
-          termStatus: termLevel?.status ?? "NOT_PUBLISHED",
-          termPublishedAt: termLevel?.publishedAt ?? null,
-          termPublishedBy: termLevel?.publishedBy
-            ? `${termLevel.publishedBy.firstName} ${termLevel.publishedBy.lastName}`
+          id: sequence.id,
+          name: sequence.name,
+          order: sequence.order,
+          publication: publication
+            ? {
+                status: publication.status,
+                publishedAt: publication.publishedAt,
+              }
             : null,
-
-          sequences: term.sequences.map((sequence) => {
-            const entry = sequenceMap.get(`${sequence.id}:${classroom.id}`);
-
-            return {
-              sequenceId: sequence.id,
-              sequenceName: sequence.name,
-              status: entry?.status ?? "NOT_PUBLISHED",
-              publishedAt: entry?.publishedAt ?? null,
-            };
-          }),
         };
-      }),
+      });
+
+      return {
+        id: classroom.id,
+        name: classroom.name,
+        section: classroom.section,
+        students: classroom._count.students,
+        marks: marksByClass.get(classroom.id) ?? 0,
+        expectedStudents:
+          studentsByClass.find((row) => row.classroomId === classroom.id)
+            ?._count._all ?? 0,
+        termPublication: termPublication
+          ? {
+              status: termPublication.status,
+              publishedAt: termPublication.publishedAt,
+              notes: termPublication.notes,
+              publishedBy: termPublication.publishedBy
+                ? `${termPublication.publishedBy.firstName} ${termPublication.publishedBy.lastName}`
+                : null,
+            }
+          : null,
+        sequences,
+      };
+    });
+
+    const termPublished = classes.filter(
+      (classroom) => classroom.termPublication?.status === "PUBLISHED"
+    ).length;
+
+    return NextResponse.json({
+      term,
+      classes,
+      summary: {
+        classes: classes.length,
+        sequences: classes.length * term.sequences.length,
+        sequencesPublished: publishedCount,
+        sequencesPending: pendingCount,
+        termsPublished: termPublished,
+        termsPending: classes.length - termPublished,
+      },
     });
   } catch (error) {
     return serverError("ADMIN PUBLICATIONS LIST ERROR", error);
@@ -147,18 +221,17 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/admin/publications
- * Publish or unpublish results.
+ * Publishes or unpublishes results at one of the two levels.
  *
  * Body:
  *   {
  *     scope: "TERM" | "SEQUENCE",
  *     termId: string,
  *     classroomId: string,
- *     sequenceId?: string,           // required when scope === "SEQUENCE"
- *     action: "PUBLISH" | "UNPUBLISH"
+ *     sequenceId?: string,       // required for scope = SEQUENCE
+ *     action: "PUBLISH" | "UNPUBLISH",
+ *     notes?: string
  *   }
- *
- * Publishing notifies the parents of the class and the teachers involved.
  */
 export async function POST(request: Request) {
   const guard = await requireAdmin();
@@ -167,14 +240,15 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const scope = str(body.scope).toUpperCase() || "TERM";
-    const action = str(body.action).toUpperCase() || "PUBLISH";
+    const scope = (str(body.scope) || "TERM").toUpperCase();
+    const action = (str(body.action) || "PUBLISH").toUpperCase();
     const termId = str(body.termId);
     const classroomId = str(body.classroomId);
     const sequenceId = str(body.sequenceId);
+    const notes = str(body.notes);
 
     if (!termId || !classroomId) {
-      return badRequest("A term and a class are required.");
+      return badRequest("A term and a class are required to publish results.");
     }
 
     if (!["TERM", "SEQUENCE"].includes(scope)) {
@@ -186,7 +260,7 @@ export async function POST(request: Request) {
     }
 
     if (scope === "SEQUENCE" && !sequenceId) {
-      return badRequest("A sequence is required when publishing a sequence.");
+      return badRequest("A sequence is required to publish a sequence.");
     }
 
     const [term, classroom] = await Promise.all([
@@ -196,7 +270,12 @@ export async function POST(request: Request) {
       }),
       prisma.classroom.findUnique({
         where: { id: classroomId },
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          students: { select: { parentId: true } },
+          assignments: { select: { teacher: { select: { userId: true } } } },
+        },
       }),
     ]);
 
@@ -206,6 +285,7 @@ export async function POST(request: Request) {
     const status = action === "PUBLISH" ? "PUBLISHED" : "UNPUBLISHED";
 
     let label = `${classroom.name} · ${term.name}`;
+    let sequenceName: string | null = null;
 
     if (scope === "SEQUENCE") {
       const sequence = await prisma.sequence.findUnique({
@@ -219,37 +299,61 @@ export async function POST(request: Request) {
         return badRequest("The selected sequence does not belong to this term.");
       }
 
+      sequenceName = sequence.name;
       label = `${classroom.name} · ${sequence.name}`;
+    }
 
+    /* ---- make sure there is something to publish ---- */
+
+    const marks = await prisma.mark.count({
+      where: {
+        student: { classroomId },
+        ...(scope === "SEQUENCE"
+          ? { sequenceId }
+          : { sequence: { termId } }),
+      },
+    });
+
+    if (action === "PUBLISH" && marks === 0) {
+      return badRequest(
+        `No mark has been recorded for ${label} yet, so there is nothing to publish.`
+      );
+    }
+
+    /* ---- write the publication record ---- */
+
+    if (scope === "TERM") {
+      await prisma.resultPublication.upsert({
+        where: { termId_classroomId: { termId, classroomId } },
+        update: {
+          status: status as never,
+          publishedAt: action === "PUBLISH" ? new Date() : null,
+          publishedById: guard.user.id,
+          notes: notes || null,
+        },
+        create: {
+          termId,
+          classroomId,
+          status: status as never,
+          publishedAt: action === "PUBLISH" ? new Date() : null,
+          publishedById: guard.user.id,
+          notes: notes || null,
+        },
+      });
+    } else {
       await prisma.sequencePublication.upsert({
         where: {
           sequenceId_classroomId: { sequenceId, classroomId },
         },
         update: {
-          status,
+          status: status as never,
           publishedAt: action === "PUBLISH" ? new Date() : null,
           publishedById: guard.user.id,
         },
         create: {
           sequenceId,
           classroomId,
-          status,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
-        },
-      });
-    } else {
-      await prisma.resultPublication.upsert({
-        where: { termId_classroomId: { termId, classroomId } },
-        update: {
-          status,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
-        },
-        create: {
-          termId,
-          classroomId,
-          status,
+          status: status as never,
           publishedAt: action === "PUBLISH" ? new Date() : null,
           publishedById: guard.user.id,
         },
@@ -260,41 +364,49 @@ export async function POST(request: Request) {
       actorId: guard.user.id,
       actorName: guard.user.fullName,
       action: action === "PUBLISH" ? "RESULT_PUBLISHED" : "RESULT_UNPUBLISHED",
-      entityType: scope === "SEQUENCE" ? "SequencePublication" : "ResultPublication",
-      entityId: `${termId}:${classroomId}:${sequenceId}`,
-      description: `${action === "PUBLISH" ? "Published" : "Unpublished"} ${
-        term.academicYear.name
-      } ${label} results`,
-      metadata: { scope, classroomId, sequenceId: sequenceId || null },
+      entityType: scope === "TERM" ? "ResultPublication" : "SequencePublication",
+      entityId: scope === "TERM" ? `${termId}:${classroomId}` : `${sequenceId}:${classroomId}`,
+      description: `${action === "PUBLISH" ? "Published" : "Unpublished"} ${label} (${marks} mark(s))`,
+      metadata: { scope, termId, classroomId, sequenceId: sequenceId || null },
     });
 
-    /* ---------- notify the families and the teachers ---------- */
+    /* ---- notify the parents and the teachers of the class ---- */
+
+    let notified = 0;
 
     if (action === "PUBLISH") {
-      const [students, assignments] = await Promise.all([
-        prisma.student.findMany({
-          where: { classroomId, parentId: { not: null } },
-          select: { parent: { select: { userId: true } } },
-        }),
-        prisma.teacherAssignment.findMany({
-          where: { classroomId },
-          select: { teacher: { select: { userId: true } } },
-        }),
-      ]);
+      const parentIds = Array.from(
+        new Set(
+          classroom.students
+            .map((student) => student.parentId)
+            .filter((id): id is string => Boolean(id))
+        )
+      );
+
+      const parents = parentIds.length
+        ? await prisma.parent.findMany({
+            where: { id: { in: parentIds } },
+            select: { userId: true },
+          })
+        : [];
 
       const recipientIds = Array.from(
         new Set([
-          ...students
-            .map((student) => student.parent?.userId)
-            .filter((id): id is string => Boolean(id)),
-          ...assignments.map((assignment) => assignment.teacher.userId),
+          ...parents.map((parent) => parent.userId),
+          ...classroom.assignments.map((assignment) => assignment.teacher.userId),
         ])
       );
 
       if (recipientIds.length) {
-        await createManyNotifications(recipientIds, {
-          title: "Results published",
-          message: `Results for ${label} have been published. You can now review them on GradeFlow.`,
+        const result = await createManyNotifications(recipientIds, {
+          title:
+            scope === "TERM"
+              ? `Results published — ${term.name}`
+              : `Results published — ${sequenceName ?? "sequence"}`,
+          message:
+            scope === "TERM"
+              ? `The ${term.name} results of ${classroom.name} (${term.academicYear.name}) are now available.`
+              : `The ${sequenceName} results of ${classroom.name} are now available.`,
           type: "RESULT_PUBLISHED",
           senderId: guard.user.id,
           audience: "CLASS",
@@ -302,16 +414,20 @@ export async function POST(request: Request) {
           relatedType: "Classroom",
           relatedId: classroomId,
         });
+
+        notified = result.count;
       }
     }
 
     return NextResponse.json({
       message:
         action === "PUBLISH"
-          ? `Results published for ${label}.`
-          : `Results unpublished for ${label}.`,
+          ? `${label} published${notified ? ` and ${notified} notification(s) sent` : ""}.`
+          : `${label} unpublished.`,
       scope,
       status,
+      marks,
+      notified,
     });
   } catch (error) {
     return serverError("ADMIN PUBLICATION UPDATE ERROR", error);
