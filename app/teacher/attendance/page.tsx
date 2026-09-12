@@ -1,719 +1,967 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
-
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
-Check,
-Save,
-Users,
-CalendarDays,
+  Check,
+  Save,
+  Users,
+  CalendarDays,
+  Loader2,
+  ShieldCheck,
 } from "lucide-react";
 
 type AttendanceStatus =
-| "PRESENT"
-| "ABSENT"
-| "LATE"
-| "EXCUSED";
+  | "PRESENT"
+  | "ABSENT"
+  | "LATE"
+  | "EXCUSED";
 
 type Student = {
-id: string;
-name: string;
-matricule: string;
-status: AttendanceStatus;
+  id: string;
+  name: string;
+  matricule: string;
+  gender?: string;
+  status: AttendanceStatus;
 };
 
-type Classroom = {
-id: string;
-name: string;
-section?: {
-name?: string;
-} | null;
-};
-
-type Subject = {
-id: string;
-name: string;
-code: string;
+type TeacherAssignment = {
+  id: string;
+  section?: {
+    id?: string;
+    name?: string;
+  } | null;
+  classroom?: {
+    id?: string;
+    name?: string;
+  } | null;
+  subject?: {
+    id?: string;
+    name?: string;
+    code?: string;
+  } | null;
 };
 
 type ApiStudent = {
-id: string;
-firstName?: string;
-lastName?: string;
-name?: string;
-matricule?: string;
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  fullName?: string;
+  matricule?: string;
+  gender?: string;
 };
 
 export default function TeacherAttendancePage() {
-const [classrooms, setClassrooms] = useState<Classroom[]>([]);
-const [subjects, setSubjects] = useState<Subject[]>([]);
-const [students, setStudents] = useState<Student[]>([]);
+  const searchParams = useSearchParams();
 
-const [classroom, setClassroom] = useState("");
-const [subject, setSubject] = useState("");
-const [term, setTerm] = useState("First Term");
-const [date, setDate] = useState(
-new Date().toISOString().split("T")[0]
-);
+  /*
+   * The class comes from:
+   * /teacher/attendance?classId=XXXX
+   */
+  const classId = searchParams.get("classId");
 
-const [loadingClassrooms, setLoadingClassrooms] =
-useState(true);
-const [loadingSubjects, setLoadingSubjects] =
-useState(true);
-const [loadingStudents, setLoadingStudents] =
-useState(false);
+  const [assignment, setAssignment] =
+    useState<TeacherAssignment | null>(null);
 
-const [error, setError] = useState("");
+  const [assignments, setAssignments] = useState<
+    TeacherAssignment[]
+  >([]);
 
-/*
+  const [students, setStudents] = useState<Student[]>([]);
 
-* =========================================================
-* LOAD CLASSROOMS
-* =========================================================
-  */
+  const [term, setTerm] = useState("First Term");
 
-useEffect(() => {
-async function loadClassrooms() {
-try {
-setLoadingClassrooms(true);
-setError("");
+  /*
+   * Date is automatically today's date.
+   */
+  const [date] = useState(
+    new Date().toISOString().split("T")[0]
+  );
 
+  const [loadingAssignment, setLoadingAssignment] =
+    useState(true);
 
-    const response = await fetch("/api/admin/classes");
+  const [loadingStudents, setLoadingStudents] =
+    useState(false);
 
-    if (!response.ok) {
-      throw new Error("Failed to load classrooms.");
+  const [saving, setSaving] = useState(false);
+
+  const [error, setError] = useState("");
+
+  /*
+   * =========================================================
+   * LOAD TEACHER ASSIGNMENTS
+   * =========================================================
+   */
+  useEffect(() => {
+    async function loadTeacherAssignments() {
+      try {
+        setLoadingAssignment(true);
+        setError("");
+
+        const response = await fetch(
+          "/api/teacher/assignments",
+          {
+            cache: "no-store",
+          }
+        );
+
+        const text = await response.text();
+
+        let data: any;
+
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          throw new Error(
+            "The server returned an invalid response."
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              "Failed to load your teacher assignments."
+          );
+        }
+
+        /*
+         * The assignments API may return:
+         *
+         * [...]
+         *
+         * OR:
+         *
+         * { assignments: [...] }
+         */
+        const assignmentList: TeacherAssignment[] =
+          Array.isArray(data)
+            ? data
+            : data.assignments ?? [];
+
+        setAssignments(assignmentList);
+
+        /*
+         * Find the assignment belonging to the class
+         * passed in the URL.
+         */
+        if (classId) {
+          const matchingAssignment =
+            assignmentList.find(
+              (item) =>
+                item.classroom?.id === classId
+            );
+
+          if (!matchingAssignment) {
+            setError(
+              "Access denied. This class is not assigned to you."
+            );
+            setAssignment(null);
+            return;
+          }
+
+          setAssignment(matchingAssignment);
+        } else {
+          setError(
+            "No classroom was specified for attendance."
+          );
+        }
+      } catch (err) {
+        console.error(
+          "FAILED TO LOAD TEACHER ASSIGNMENTS:",
+          err
+        );
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load your assignments."
+        );
+      } finally {
+        setLoadingAssignment(false);
+      }
     }
 
-    const data: Classroom[] | { classes?: Classroom[] } =
-      await response.json();
+    loadTeacherAssignments();
+  }, [classId]);
 
-    const classroomList = Array.isArray(data)
-      ? data
-      : data.classes ?? [];
-
-    setClassrooms(classroomList);
-
-    if (classroomList.length > 0) {
-      setClassroom(classroomList[0].id);
-    }
-  } catch (err) {
-    console.error("FAILED TO LOAD CLASSROOMS:", err);
-    setError("Unable to load classrooms.");
-  } finally {
-    setLoadingClassrooms(false);
-  }
-}
-
-loadClassrooms();
-
-
-}, []);
-
-/*
-
-* =========================================================
-* LOAD SUBJECTS
-* =========================================================
-  */
-
-useEffect(() => {
-async function loadSubjects() {
-try {
-setLoadingSubjects(true);
-setError("");
-
-
-    const response = await fetch("/api/admin/subjects");
-
-    if (!response.ok) {
-      throw new Error("Failed to load subjects.");
+  /*
+   * =========================================================
+   * LOAD STUDENTS
+   * =========================================================
+   */
+  useEffect(() => {
+    if (!classId || !assignment) {
+      setStudents([]);
+      return;
     }
 
-    const data: Subject[] | { subjects?: Subject[] } =
-      await response.json();
+    async function loadStudents() {
+      try {
+        setLoadingStudents(true);
+        setError("");
 
-    const subjectList = Array.isArray(data)
-      ? data
-      : data.subjects ?? [];
+        const response = await fetch(
+          `/api/teacher/classes/${classId}/students`,
+          {
+            cache: "no-store",
+          }
+        );
 
-    setSubjects(subjectList);
+        const text = await response.text();
 
-    if (subjectList.length > 0) {
-      setSubject(subjectList[0].id);
+        let data: any;
+
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          throw new Error(
+            "The server returned an invalid response."
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              "Failed to load students."
+          );
+        }
+
+        const studentList: ApiStudent[] =
+          Array.isArray(data)
+            ? data
+            : data.students ?? [];
+
+        const formattedStudents: Student[] =
+          studentList.map((student) => ({
+            id: student.id,
+
+            name:
+              student.fullName ||
+              student.name ||
+              `${student.firstName ?? ""} ${
+                student.lastName ?? ""
+              }`.trim() ||
+              "Unnamed Student",
+
+            matricule:
+              student.matricule ?? "N/A",
+
+            gender:
+              student.gender ?? "",
+
+            status: "PRESENT",
+          }));
+
+        setStudents(formattedStudents);
+      } catch (err) {
+        console.error(
+          "FAILED TO LOAD STUDENTS:",
+          err
+        );
+
+        setStudents([]);
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load students."
+        );
+      } finally {
+        setLoadingStudents(false);
+      }
     }
-  } catch (err) {
-    console.error("FAILED TO LOAD SUBJECTS:", err);
-    setError("Unable to load subjects.");
-  } finally {
-    setLoadingSubjects(false);
-  }
-}
 
-loadSubjects();
+    loadStudents();
+  }, [classId, assignment]);
 
+  /*
+   * =========================================================
+   * OTHER SUBJECTS ASSIGNED TO THIS TEACHER FOR THIS CLASS
+   * =========================================================
+   */
+  const classAssignments = useMemo(() => {
+    if (!classId) {
+      return [];
+    }
 
-}, []);
-
-/*
-
-* =========================================================
-* LOAD STUDENTS WHEN CLASSROOM CHANGES
-* =========================================================
-  */
-
-useEffect(() => {
-if (!classroom) {
-setStudents([]);
-return;
-}
-
-async function loadStudents() {
-  try {
-    setLoadingStudents(true);
-    setError("");
-
-    const response = await fetch(
-      `/api/admin/classes/${classroom}/students`
+    return assignments.filter(
+      (item) =>
+        item.classroom?.id === classId
     );
+  }, [assignments, classId]);
 
-    if (!response.ok) {
-      throw new Error("Failed to load students.");
-    }
+  /*
+   * =========================================================
+   * UPDATE ATTENDANCE STATUS
+   * =========================================================
+   */
+  function updateStatus(
+    studentId: string,
+    status: AttendanceStatus
+  ) {
+    setStudents((current) =>
+      current.map((student) =>
+        student.id === studentId
+          ? {
+              ...student,
+              status,
+            }
+          : student
+      )
+    );
+  }
 
-    const data:
-      | ApiStudent[]
-      | { students?: ApiStudent[] } =
-      await response.json();
-
-    const studentList = Array.isArray(data)
-      ? data
-      : data.students ?? [];
-
-    const formattedStudents: Student[] = studentList.map(
-      (student) => ({
-        id: student.id,
-        name:
-          student.name ||
-          `${student.firstName ?? ""} ${
-            student.lastName ?? ""
-          }`.trim() ||
-          "Unnamed Student",
-        matricule: student.matricule ?? "N/A",
+  /*
+   * =========================================================
+   * MARK ALL PRESENT
+   * =========================================================
+   */
+  function markAllPresent() {
+    setStudents((current) =>
+      current.map((student) => ({
+        ...student,
         status: "PRESENT",
-      })
+      }))
+    );
+  }
+
+  /*
+   * =========================================================
+   * SAVE ATTENDANCE
+   * =========================================================
+   */
+  async function handleSave() {
+    if (!assignment || !classId) {
+      alert(
+        "You are not assigned to this classroom."
+      );
+      return;
+    }
+
+    if (students.length === 0) {
+      alert(
+        "There are no students in this classroom."
+      );
+      return;
+    }
+
+    /*
+     * For now we use the subject from the teacher's
+     * assignment.
+     */
+    const subjectId =
+      assignment.subject?.id;
+
+    if (!subjectId) {
+      alert(
+        "No subject assignment was found for this classroom."
+      );
+      return;
+    }
+
+    const payload = {
+      classroomId: classId,
+      subjectId,
+      term,
+      date,
+
+      students: students.map((student) => ({
+        studentId: student.id,
+        status: student.status,
+      })),
+    };
+
+    console.log(
+      "TEACHER ATTENDANCE PAYLOAD:",
+      payload
     );
 
-    setStudents(formattedStudents);
-  } catch (err) {
-    console.error("FAILED TO LOAD STUDENTS:", err);
-    setStudents([]);
-    setError("Unable to load students for this classroom.");
-  } finally {
-    setLoadingStudents(false);
+    /*
+     * Connect this to your attendance API when ready.
+     */
+    try {
+      setSaving(true);
+
+      /*
+       * Example:
+       *
+       * const response = await fetch(
+       *   "/api/teacher/attendance",
+       *   {
+       *     method: "POST",
+       *     headers: {
+       *       "Content-Type": "application/json",
+       *     },
+       *     body: JSON.stringify(payload),
+       *   }
+       * );
+       *
+       * if (!response.ok) {
+       *   ...
+       * }
+       */
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 500)
+      );
+
+      alert(
+        "Attendance saved successfully!"
+      );
+    } catch (err) {
+      console.error(
+        "SAVE ATTENDANCE ERROR:",
+        err
+      );
+
+      alert(
+        "Failed to save attendance."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
-}
 
-loadStudents();
+  /*
+   * =========================================================
+   * SUMMARY COUNTS
+   * =========================================================
+   */
+  const presentCount = students.filter(
+    (student) =>
+      student.status === "PRESENT"
+  ).length;
 
+  const absentCount = students.filter(
+    (student) =>
+      student.status === "ABSENT"
+  ).length;
 
-}, [classroom]);
+  const lateCount = students.filter(
+    (student) =>
+      student.status === "LATE"
+  ).length;
 
-/*
+  const excusedCount = students.filter(
+    (student) =>
+      student.status === "EXCUSED"
+  ).length;
 
-* =========================================================
-* UPDATE ATTENDANCE STATUS
-* =========================================================
-  */
+  /*
+   * =========================================================
+   * DISPLAY VALUES
+   * =========================================================
+   */
+  const sectionName =
+    assignment?.section?.name ||
+    "Not assigned";
 
-function updateStatus(
-studentId: string,
-status: AttendanceStatus
-) {
-setStudents((current) =>
-current.map((student) =>
-student.id === studentId
-? { ...student, status }
-: student
-)
-);
-}
+  const classroomName =
+    assignment?.classroom?.name ||
+    "Not assigned";
 
-/*
+  const subjectName =
+    assignment?.subject?.name ||
+    "Not assigned";
 
-* =========================================================
-* MARK ALL PRESENT
-* =========================================================
-  */
+  const subjectCode =
+    assignment?.subject?.code || "";
 
-function markAllPresent() {
-setStudents((current) =>
-current.map((student) => ({
-...student,
-status: "PRESENT",
-}))
-);
-}
-
-/*
-
-* =========================================================
-* SAVE ATTENDANCE
-* =========================================================
-  */
-
-async function handleSave() {
-if (!classroom || !subject || !date) {
-alert("Please select a classroom, subject and date.");
-return;
-}
-
-if (students.length === 0) {
-  alert("There are no students in this classroom.");
-  return;
-}
-
-const payload = {
-  classroomId: classroom,
-  subjectId: subject,
-  term,
-  date,
-  students: students.map((student) => ({
-    studentId: student.id,
-    status: student.status,
-  })),
-};
-
-console.log("ATTENDANCE PAYLOAD:", payload);
-
-/*
- * The API endpoint can be connected here once your
- * attendance API is ready.
- */
-
-alert("Attendance saved successfully!");
-
-
-}
-
-/*
-
-* =========================================================
-* SUMMARY COUNTS
-* =========================================================
-  */
-
-const presentCount = students.filter(
-(student) => student.status === "PRESENT"
-).length;
-
-const absentCount = students.filter(
-(student) => student.status === "ABSENT"
-).length;
-
-const lateCount = students.filter(
-(student) => student.status === "LATE"
-).length;
-
-const excusedCount = students.filter(
-(student) => student.status === "EXCUSED"
-).length;
-
-const selectedClassroom = classrooms.find(
-(item) => item.id === classroom
-);
-
-return ( <div className="min-h-[calc(100vh-5rem)] bg-gray-50 p-5 sm:p-8 dark:bg-gray-950"> <div className="mx-auto max-w-7xl">
-
-
-    {/* Page Header */}
-    <div className="mb-8">
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
-          <Users size={23} />
-        </div>
-
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Attendance
-          </h1>
-
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Record and manage student attendance.
-          </p>
-        </div>
-      </div>
-    </div>
-
-    {/* Error */}
-    {error && (
-      <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
-        {error}
-      </div>
-    )}
-
-    {/* Selection Card */}
-    <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-      <div className="mb-5 flex items-center gap-3">
-        <CalendarDays
-          size={20}
-          className="text-purple-600"
-        />
-
-        <div>
-          <h2 className="font-semibold text-gray-900 dark:text-white">
-            Attendance Details
-          </h2>
+  /*
+   * =========================================================
+   * LOADING
+   * =========================================================
+   */
+  if (loadingAssignment) {
+    return (
+      <div className="flex min-h-[calc(100vh-5rem)] items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2
+            size={35}
+            className="animate-spin text-purple-700"
+          />
 
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Select the class, subject and date.
+            Loading your attendance assignment...
           </p>
         </div>
       </div>
+    );
+  }
 
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+  /*
+   * =========================================================
+   * ERROR / ACCESS DENIED
+   * =========================================================
+   */
+  if (error || !assignment) {
+    return (
+      <div className="min-h-[calc(100vh-5rem)] bg-gray-50 p-5 sm:p-8 dark:bg-gray-950">
+        <div className="mx-auto max-w-3xl">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/20">
+            <div className="flex items-start gap-4">
+              <ShieldCheck
+                size={28}
+                className="shrink-0 text-red-600"
+              />
 
-        {/* Classroom */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Classroom
-          </label>
-
-          <select
-            value={classroom}
-            onChange={(event) =>
-              setClassroom(event.target.value)
-            }
-            disabled={loadingClassrooms}
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          >
-            {loadingClassrooms ? (
-              <option>Loading classrooms...</option>
-            ) : classrooms.length === 0 ? (
-              <option>No classrooms available</option>
-            ) : (
-              classrooms.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                  {item.section?.name
-                    ? ` - ${item.section.name}`
-                    : ""}
-                </option>
-              ))
-            )}
-          </select>
-        </div>
-
-        {/* Subject */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Subject
-          </label>
-
-          <select
-            value={subject}
-            onChange={(event) =>
-              setSubject(event.target.value)
-            }
-            disabled={loadingSubjects}
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          >
-            {loadingSubjects ? (
-              <option>Loading subjects...</option>
-            ) : subjects.length === 0 ? (
-              <option>No subjects available</option>
-            ) : (
-              subjects.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} ({item.code})
-                </option>
-              ))
-            )}
-          </select>
-        </div>
-
-        {/* Term */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Term
-          </label>
-
-          <select
-            value={term}
-            onChange={(event) =>
-              setTerm(event.target.value)
-            }
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          >
-            <option>First Term</option>
-            <option>Second Term</option>
-            <option>Third Term</option>
-          </select>
-        </div>
-
-        {/* Date */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Date
-          </label>
-
-          <input
-            type="date"
-            value={date}
-            onChange={(event) =>
-              setDate(event.target.value)
-            }
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          />
-        </div>
-      </div>
-    </div>
-
-    {/* Summary */}
-    <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <SummaryCard
-        label="Present"
-        value={presentCount}
-        className="text-green-600"
-      />
-
-      <SummaryCard
-        label="Absent"
-        value={absentCount}
-        className="text-red-600"
-      />
-
-      <SummaryCard
-        label="Late"
-        value={lateCount}
-        className="text-yellow-600"
-      />
-
-      <SummaryCard
-        label="Excused"
-        value={excusedCount}
-        className="text-blue-600"
-      />
-    </div>
-
-    {/* Students */}
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
-      {/* Students Header */}
-      <div className="flex flex-col justify-between gap-4 border-b border-gray-200 p-6 sm:flex-row sm:items-center dark:border-gray-800">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-            <Users size={21} />
-          </div>
-
-          <div>
-            <h2 className="font-semibold text-gray-900 dark:text-white">
-              {selectedClassroom?.name ??
-                "Select a classroom"}
-            </h2>
-
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {loadingStudents
-                ? "Loading students..."
-                : `${students.length} students`}
-            </p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={markAllPresent}
-          disabled={
-            students.length === 0 || loadingStudents
-          }
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-900 dark:text-green-400 dark:hover:bg-green-950/30"
-        >
-          <Check size={16} />
-          Mark All Present
-        </button>
-      </div>
-
-      {/* Loading */}
-      {loadingStudents && (
-        <div className="p-10 text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-purple-600" />
-
-          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
-            Loading students...
-          </p>
-        </div>
-      )}
-
-      {/* Empty */}
-      {!loadingStudents && students.length === 0 && (
-        <div className="p-10 text-center">
-          <Users className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-700" />
-
-          <p className="mt-3 font-medium text-gray-700 dark:text-gray-300">
-            No students found
-          </p>
-
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Select another classroom or make sure students
-            have been assigned to this class.
-          </p>
-        </div>
-      )}
-
-      {/* Student Rows */}
-      {!loadingStudents && students.length > 0 && (
-        <div className="divide-y divide-gray-200 dark:divide-gray-800">
-          {students.map((student) => (
-            <div
-              key={student.id}
-              className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
-            >
               <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white">
-                  {student.name}
-                </h3>
+                <h1 className="text-lg font-bold text-red-700 dark:text-red-400">
+                  Attendance Access Denied
+                </h1>
+
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                  {error ||
+                    "This classroom is not assigned to you."}
+                </p>
+
+                <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+                  Please return to your assigned classes
+                  and open attendance from there.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[calc(100vh-5rem)] bg-gray-50 p-5 sm:p-8 dark:bg-gray-950">
+      <div className="mx-auto max-w-7xl">
+
+        {/* =====================================================
+            PAGE HEADER
+        ===================================================== */}
+        <div className="mb-8">
+          <div className="flex items-center gap-3">
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+              <Users size={23} />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Attendance
+              </h1>
+
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Record attendance for your assigned class.
+              </p>
+            </div>
+
+          </div>
+        </div>
+
+        {/* =====================================================
+            ATTENDANCE DETAILS
+        ===================================================== */}
+        <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+          <div className="mb-5 flex items-center gap-3">
+
+            <CalendarDays
+              size={20}
+              className="text-purple-600"
+            />
+
+            <div>
+              <h2 className="font-semibold text-gray-900 dark:text-white">
+                Attendance Details
+              </h2>
+
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                These details are automatically based on your assignment.
+              </p>
+            </div>
+
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+
+            {/* SECTION */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Section
+              </label>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {sectionName}
+              </div>
+            </div>
+
+            {/* CLASS */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Class
+              </label>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {classroomName}
+              </div>
+            </div>
+
+            {/* TERM */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Term
+              </label>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {term}
+              </div>
+            </div>
+
+            {/* DATE */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Date
+              </label>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {date}
+              </div>
+            </div>
+
+          </div>
+
+          {/* SUBJECT */}
+          <div className="mt-5">
+
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Subject
+            </label>
+
+            <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+              {subjectName}
+
+              {subjectCode && (
+                <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">
+                  ({subjectCode})
+                </span>
+              )}
+            </div>
+
+          </div>
+
+          {/* ASSIGNED SUBJECTS INFO */}
+          {classAssignments.length > 1 && (
+            <div className="mt-4 rounded-xl bg-purple-50 p-4 text-sm text-purple-700 dark:bg-purple-950/20 dark:text-purple-300">
+              You have {classAssignments.length} subject assignments
+              for this class. Attendance is currently being recorded
+              for <strong>{subjectName}</strong>.
+            </div>
+          )}
+
+        </div>
+
+        {/* =====================================================
+            SUMMARY
+        ===================================================== */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+          <SummaryCard
+            label="Present"
+            value={presentCount}
+            className="text-green-600"
+          />
+
+          <SummaryCard
+            label="Absent"
+            value={absentCount}
+            className="text-red-600"
+          />
+
+          <SummaryCard
+            label="Late"
+            value={lateCount}
+            className="text-yellow-600"
+          />
+
+          <SummaryCard
+            label="Excused"
+            value={excusedCount}
+            className="text-blue-600"
+          />
+
+        </div>
+
+        {/* =====================================================
+            STUDENTS
+        ===================================================== */}
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+          {/* STUDENTS HEADER */}
+          <div className="flex flex-col justify-between gap-4 border-b border-gray-200 p-6 sm:flex-row sm:items-center dark:border-gray-800">
+
+            <div className="flex items-center gap-3">
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
+                <Users size={21} />
+              </div>
+
+              <div>
+                <h2 className="font-semibold text-gray-900 dark:text-white">
+                  {classroomName}
+                </h2>
 
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {student.matricule}
+                  {loadingStudents
+                    ? "Loading students..."
+                    : `${students.length} students`}
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                <StatusButton
-                  label="Present"
-                  active={student.status === "PRESENT"}
-                  activeClass="bg-green-600 text-white"
-                  onClick={() =>
-                    updateStatus(
-                      student.id,
-                      "PRESENT"
-                    )
-                  }
-                />
-
-                <StatusButton
-                  label="Absent"
-                  active={student.status === "ABSENT"}
-                  activeClass="bg-red-600 text-white"
-                  onClick={() =>
-                    updateStatus(
-                      student.id,
-                      "ABSENT"
-                    )
-                  }
-                />
-
-                <StatusButton
-                  label="Late"
-                  active={student.status === "LATE"}
-                  activeClass="bg-yellow-500 text-white"
-                  onClick={() =>
-                    updateStatus(
-                      student.id,
-                      "LATE"
-                    )
-                  }
-                />
-
-                <StatusButton
-                  label="Excused"
-                  active={student.status === "EXCUSED"}
-                  activeClass="bg-blue-600 text-white"
-                  onClick={() =>
-                    updateStatus(
-                      student.id,
-                      "EXCUSED"
-                    )
-                  }
-                />
-              </div>
             </div>
-          ))}
-        </div>
-      )}
 
-      {/* Save */}
-      <div className="flex justify-end border-t border-gray-200 p-6 dark:border-gray-800">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={
-            students.length === 0 ||
-            !classroom ||
-            !subject
-          }
-          className="inline-flex items-center gap-2 rounded-xl bg-purple-700 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Save size={18} />
-          Save Attendance
-        </button>
+            <button
+              type="button"
+              onClick={markAllPresent}
+              disabled={
+                students.length === 0 ||
+                loadingStudents
+              }
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-900 dark:text-green-400 dark:hover:bg-green-950/30"
+            >
+              <Check size={16} />
+              Mark All Present
+            </button>
+
+          </div>
+
+          {/* LOADING */}
+          {loadingStudents && (
+            <div className="p-10 text-center">
+
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-purple-600" />
+
+              <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+                Loading students...
+              </p>
+
+            </div>
+          )}
+
+          {/* EMPTY */}
+          {!loadingStudents &&
+            students.length === 0 && (
+              <div className="p-10 text-center">
+
+                <Users className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-700" />
+
+                <p className="mt-3 font-medium text-gray-700 dark:text-gray-300">
+                  No students found
+                </p>
+
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  There are currently no students registered
+                  in {classroomName}.
+                </p>
+
+              </div>
+            )}
+
+          {/* STUDENTS */}
+          {!loadingStudents &&
+            students.length > 0 && (
+              <div className="divide-y divide-gray-200 dark:divide-gray-800">
+
+                {students.map((student) => (
+                  <div
+                    key={student.id}
+                    className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
+                  >
+
+                    {/* STUDENT INFO */}
+                    <div>
+                      <h3 className="font-semibold text-gray-900 dark:text-white">
+                        {student.name}
+                      </h3>
+
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+
+                        <span>
+                          Matricule: {student.matricule}
+                        </span>
+
+                        {student.gender && (
+                          <span>
+                            Gender: {student.gender}
+                          </span>
+                        )}
+
+                      </div>
+                    </div>
+
+                    {/* STATUS BUTTONS */}
+                    <div className="flex flex-wrap gap-2">
+
+                      <StatusButton
+                        label="Present"
+                        active={
+                          student.status === "PRESENT"
+                        }
+                        activeClass="bg-green-600 text-white"
+                        onClick={() =>
+                          updateStatus(
+                            student.id,
+                            "PRESENT"
+                          )
+                        }
+                      />
+
+                      <StatusButton
+                        label="Absent"
+                        active={
+                          student.status === "ABSENT"
+                        }
+                        activeClass="bg-red-600 text-white"
+                        onClick={() =>
+                          updateStatus(
+                            student.id,
+                            "ABSENT"
+                          )
+                        }
+                      />
+
+                      <StatusButton
+                        label="Late"
+                        active={
+                          student.status === "LATE"
+                        }
+                        activeClass="bg-yellow-500 text-white"
+                        onClick={() =>
+                          updateStatus(
+                            student.id,
+                            "LATE"
+                          )
+                        }
+                      />
+
+                      <StatusButton
+                        label="Excused"
+                        active={
+                          student.status === "EXCUSED"
+                        }
+                        activeClass="bg-blue-600 text-white"
+                        onClick={() =>
+                          updateStatus(
+                            student.id,
+                            "EXCUSED"
+                          )
+                        }
+                      />
+
+                    </div>
+
+                  </div>
+                ))}
+
+              </div>
+            )}
+
+          {/* SAVE */}
+          <div className="flex justify-end border-t border-gray-200 p-6 dark:border-gray-800">
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={
+                students.length === 0 ||
+                !assignment ||
+                saving
+              }
+              className="inline-flex items-center gap-2 rounded-xl bg-purple-700 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+
+              {saving ? (
+                <>
+                  <Loader2
+                    size={18}
+                    className="animate-spin"
+                  />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save size={18} />
+                  Save Attendance
+                </>
+              )}
+
+            </button>
+
+          </div>
+
+        </div>
+
       </div>
     </div>
-  </div>
-</div>
-
-
-);
+  );
 }
 
 /*
-
-* =========================================================
-* SUMMARY CARD
-* =========================================================
-  */
-
+ * =========================================================
+ * SUMMARY CARD
+ * =========================================================
+ */
 function SummaryCard({
-label,
-value,
-className,
+  label,
+  value,
+  className,
 }: {
-label: string;
-value: number;
-className: string;
+  label: string;
+  value: number;
+  className: string;
 }) {
-return ( <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900"> <p className="text-sm text-gray-500 dark:text-gray-400">
-{label} </p>
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
 
-  <p
-    className={`mt-2 text-2xl font-bold ${className}`}
-  >
-    {value}
-  </p>
-</div>
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {label}
+      </p>
 
+      <p
+        className={`mt-2 text-2xl font-bold ${className}`}
+      >
+        {value}
+      </p>
 
-);
+    </div>
+  );
 }
 
 /*
-
-* =========================================================
-* STATUS BUTTON
-* =========================================================
-  */
-
+ * =========================================================
+ * STATUS BUTTON
+ * =========================================================
+ */
 function StatusButton({
-label,
-active,
-activeClass,
-onClick,
+  label,
+  active,
+  activeClass,
+  onClick,
 }: {
-label: string;
-active: boolean;
-activeClass: string;
-onClick: () => void;
+  label: string;
+  active: boolean;
+  activeClass: string;
+  onClick: () => void;
 }) {
-return (
-<button
-type="button"
-onClick={onClick}
-className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
         active
           ? activeClass
           : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
       }`}
->
-{label} </button>
-);
+    >
+      {label}
+    </button>
+  );
 }

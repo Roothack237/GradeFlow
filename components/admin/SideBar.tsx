@@ -166,7 +166,7 @@ export default function Sidebar({
             {/* LOGO */}
 
             <Link
-              href="/admin/dashboard"
+              href="/"
               onClick={closeSidebar}
               className="flex items-center gap-3"
             >
@@ -292,6 +292,12 @@ export default function Sidebar({
                     href="/admin/academic-management"
                     icon={<BookOpen size={19} />}
                     label="Academic Management"
+                    onClick={closeSidebar}
+                  />
+                  <SidebarLink
+                    href="/admin/teacher-records"
+                    icon={<BookOpen size={19} />}
+                    label="Results Management"
                     onClick={closeSidebar}
                   />
 

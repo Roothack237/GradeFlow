@@ -1,9 +1,13 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcrypt";
-import prisma  from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  session: {
+    strategy: "jwt",
+  },
+
   providers: [
     Credentials({
       credentials: {
@@ -12,12 +16,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
 
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.credential) {
+        if (
+          !credentials?.email ||
+          !credentials?.credential
+        ) {
           return null;
         }
 
-        const email = String(credentials.email);
-        const credential = String(credentials.credential);
+        const email = String(credentials.email)
+          .trim()
+          .toLowerCase();
+
+        const credential = String(
+          credentials.credential
+        );
 
         const user = await prisma.user.findUnique({
           where: { email },
@@ -29,7 +41,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         let valid = false;
 
-        // Admin → password
         if (user.role === "ADMIN") {
           if (!user.passwordHash) {
             return null;
@@ -39,10 +50,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             credential,
             user.passwordHash
           );
-        }
-
-        // Teacher / Parent → login code
-        else {
+        } else {
           valid = user.loginCode === credential;
         }
 
@@ -55,6 +63,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           email: user.email,
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
+          image: user.image ?? null,
         };
       },
     }),
@@ -63,16 +72,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        token.sub = user.id;
         token.role = user.role;
+        token.picture = user.image ?? null;
       }
 
       return token;
     },
 
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.sub as string;
-        session.user.role = token.role as string;
+      if (session?.user) {
+        session.user.id = token?.sub ?? "";
+        session.user.role = (token?.role as string) ?? "";
+        session.user.image =
+          (token?.picture as string | null) ?? null;
       }
 
       return session;

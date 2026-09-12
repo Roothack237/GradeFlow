@@ -117,13 +117,6 @@ export default function ResultsPage() {
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
 
           <div>
-            <Link
-              href="/admin/dashboard"
-              className="mb-3 inline-flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600"
-            >
-              <ArrowLeft size={16} />
-              Back to Dashboard
-            </Link>
 
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
               Results Management

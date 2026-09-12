@@ -116,26 +116,7 @@ return (
       </button>
     </div>
 
-    {/* Profile */}
-    <div className="border-b border-gray-200 p-5 dark:border-gray-800">
-      <div className="flex items-center gap-3 rounded-xl bg-gray-50 p-3 dark:bg-gray-800">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-          PT
-        </div>
-
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">
-            Parent Account
-          </p>
-
-          <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-            Parent
-          </p>
-        </div>
-      </div>
-    </div>
-
-    {/* Navigation */}
+     {/* Navigation */}
     <nav className="flex-1 overflow-y-auto px-4 py-5">
       <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
         Main Menu

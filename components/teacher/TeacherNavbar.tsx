@@ -1,11 +1,10 @@
+
 "use client";
 
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import {
-  Bell,
-  Moon,
-  Sun,
-} from "lucide-react";
+import { Bell, Moon, Sun } from "lucide-react";
+import Link from "next/link";
 
 interface TeacherNavbarProps {
   title: string;
@@ -19,6 +18,11 @@ export default function TeacherNavbar({
   teacherName = "Teacher",
 }: TeacherNavbarProps) {
   const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);  
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const toggleTheme = () => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark");
@@ -48,17 +52,20 @@ export default function TeacherNavbar({
         <div className="flex items-center gap-2 sm:gap-4">
 
           {/* THEME */}
-          <button
+         <button
             type="button"
             onClick={toggleTheme}
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-gray-500 transition hover:bg-gray-100 hover:text-purple-600 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-purple-300"
-            title="Toggle theme"
+            className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             aria-label="Toggle theme"
           >
-            {resolvedTheme === "dark" ? (
-              <Sun size={21} />
+            {mounted ? (
+              resolvedTheme === "dark" ? (
+                <Sun size={21} />
+              ) : (
+                <Moon size={21} />
+              )
             ) : (
-              <Moon size={21} />
+              <div className="h-21px w-21px" />
             )}
           </button>
 
@@ -77,11 +84,17 @@ export default function TeacherNavbar({
           <div className="hidden h-8 w-px bg-gray-200 dark:bg-gray-700 sm:block" />
 
           {/* TEACHER PROFILE */}
-          <div className="flex items-center gap-3">
+          <Link
+            href="/teacher/profile"
+            className="flex items-center gap-3 rounded-xl p-1.5 transition hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="View Profile"
+          >
+            {/* PROFILE INITIAL */}
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-100 font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
               {initials}
             </div>
 
+            {/* TEACHER NAME */}
             <div className="hidden sm:block">
               <p className="text-sm font-semibold text-gray-900 dark:text-white">
                 {teacherName}
@@ -91,9 +104,11 @@ export default function TeacherNavbar({
                 Teacher
               </p>
             </div>
-          </div>
+          </Link>
+
         </div>
       </div>
     </header>
   );
 }
+

@@ -47,6 +47,12 @@ enum NotificationType {
   SUCCESS
 }
 
+enum AvailabilityStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum WeekDay {
   MONDAY
 
@@ -70,6 +76,7 @@ model User {
   status       AccountStatus @default(ACTIVE)
 
   phone     String?
+  image     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -110,10 +117,11 @@ model Teacher {
   teacherId String @unique
   loginCode String @unique
 
-  assignments TeacherAssignment[]
-  timetable   Timetable[]
-  attendances Attendance[]
-  marks       Mark[]
+  assignments  TeacherAssignment[]
+  availability TeacherAvailability[]
+  timetable    Timetable[]
+  attendances  Attendance[]
+  marks        Mark[]
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -131,6 +139,7 @@ model Parent {
 
   gender      String?
   dateOfBirth DateTime?
+  image       String?
 
   children Student[]
 
@@ -236,28 +245,26 @@ model AcademicYear {
   startDate DateTime
   endDate   DateTime
 
-  // Add your existing relations here
-  // classrooms Classroom[]
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  terms     Term[]
+
+  terms      Term[]
+  timetables Timetable[]
 }
 
 model Term {
   id String @id @default(cuid())
 
-  name String
-
+  name  String
   order Int
 
   academicYearId String
 
   reportCards ReportCard[]
+  sequences   Sequence[]
+  timetables  Timetable[]
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-
-  sequences Sequence[]
 }
 
 model Sequence {
@@ -424,23 +431,44 @@ model Timetable {
   id String @id @default(cuid())
 
   classroomId String
+  subjectId   String
+  teacherId   String
 
-  subjectId String
+  academicYearId String
+  termId         String
+
+  day       WeekDay
+  startTime String
+  endTime   String
+
+  classroom    Classroom    @relation(fields: [classroomId], references: [id])
+  subject      Subject      @relation(fields: [subjectId], references: [id])
+  teacher      Teacher      @relation(fields: [teacherId], references: [id])
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  term         Term         @relation(fields: [termId], references: [id])
+
+  studentId String?
+  student   Student? @relation(fields: [studentId], references: [id])
+}
+
+model TeacherAvailability {
+  id String @id @default(cuid())
 
   teacherId String
 
-  day WeekDay
-
+  day       WeekDay
   startTime String
+  endTime   String
 
-  endTime String
+  status AvailabilityStatus @default(PENDING)
+  note   String?
 
-  classroom Classroom @relation(fields: [classroomId], references: [id])
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
-  subject Subject @relation(fields: [subjectId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  teacher Teacher @relation(fields: [teacherId], references: [id])
-
-  student   Student? @relation(fields: [studentId], references: [id])
-  studentId String?
+  @@index([teacherId])
+  @@index([day])
+  @@index([status])
 }

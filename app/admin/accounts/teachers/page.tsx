@@ -941,28 +941,18 @@ export default function TeachersPage() {
                     </label>
 
                     <select
-                      name="gender"
-                      value={formData.gender}
-                      onChange={handleChange}
-                      required
-                      className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                    >
-                      <option value="">
-                        Select gender
-                      </option>
-
-                      <option value="MALE">
-                        Male
-                      </option>
-
-                      <option value="FEMALE">
-                        Female
-                      </option>
-
-                      <option value="OTHER">
-                        Other
-                      </option>
-                    </select>
+                        value={formData.gender}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            gender: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Select Gender</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                      </select>
                   </div>
                 </div>
 

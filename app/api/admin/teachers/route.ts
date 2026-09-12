@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { sendTeacherLoginCode } from "@/lib/email";
 
 function generateTeacherId() {
   return `TCH${Date.now().toString().slice(-6)}`;
 }
 
 function generateLoginCode() {
-  return `TCH-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
 export async function GET() {
@@ -26,11 +27,9 @@ export async function GET() {
         gender: true,
         dateOfBirth: true,
         loginCode: true,
-
         assignments: {
           select: {
             id: true,
-
             subject: {
               select: {
                 id: true,
@@ -38,12 +37,10 @@ export async function GET() {
                 code: true,
               },
             },
-
             classroom: {
               select: {
                 id: true,
                 name: true,
-
                 section: {
                   select: {
                     id: true,
@@ -127,6 +124,29 @@ export async function POST(request: Request) {
     const cleanLastName = String(lastName).trim();
     const cleanEmail = String(email).trim().toLowerCase();
 
+    // ---------------------------------------
+    // Validate Gender
+    // ---------------------------------------
+   let cleanGender: "Male" | "Female" | null = null;
+
+if (gender) {
+  const genderValue = String(gender).trim().toLowerCase();
+
+  if (genderValue === "male") {
+    cleanGender = "Male";
+  } else if (genderValue === "female") {
+    cleanGender = "Female";
+  } else {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Gender must be Male or Female",
+      },
+      { status: 400 }
+    );
+  }
+}
+
     if (!cleanFirstName || !cleanLastName || !cleanEmail) {
       return NextResponse.json(
         {
@@ -180,7 +200,7 @@ export async function POST(request: Request) {
     }
 
     // ---------------------------------------
-    // Generate unique Login Code
+    // Generate unique 4-digit Login Code
     // ---------------------------------------
     let loginCode = generateLoginCode();
 
@@ -214,36 +234,28 @@ export async function POST(request: Request) {
           firstName: cleanFirstName,
           lastName: cleanLastName,
           email: cleanEmail,
-
           loginCode,
-
           role: "TEACHER",
-
           status: "ACTIVE",
-
           phone: phone ? String(phone).trim() : null,
         },
       });
 
-      const teacher = await tx.teacher.create({
-        data: {
-          firstName: cleanFirstName,
-          lastName: cleanLastName,
-          fullName,
-          email: cleanEmail,
-          gender: gender || null,
-          
-          dateOfBirth: dateOfBirth
-            ? new Date(dateOfBirth)
-            : null,
-
-          phone: phone ? String(phone).trim() : null,
-          teacherId: finalTeacherId,
-          loginCode,
-
-          userId: user.id,
-        },
-
+     const teacher = await tx.teacher.create({
+          data: {
+            firstName: cleanFirstName,
+            lastName: cleanLastName,
+            fullName,
+            email: cleanEmail,
+            gender: cleanGender,
+            dateOfBirth: dateOfBirth
+              ? new Date(dateOfBirth)
+              : null,
+            phone: phone ? String(phone).trim() : null,
+            teacherId: finalTeacherId,
+            loginCode,
+            userId: user.id,
+          },
         select: {
           id: true,
           teacherId: true,
@@ -258,6 +270,9 @@ export async function POST(request: Request) {
         },
       });
 
+      // ---------------------------------------
+      // Create Teacher Assignments
+      // ---------------------------------------
       if (Array.isArray(assignments) && assignments.length > 0) {
         await tx.teacherAssignment.createMany({
           data: assignments.map((assignment: any) => ({
@@ -268,7 +283,7 @@ export async function POST(request: Request) {
           })),
           skipDuplicates: true,
         });
-}
+      }
 
       return {
         user,
@@ -282,12 +297,39 @@ export async function POST(request: Request) {
     );
 
     // ---------------------------------------
-    // Always return JSON
+    // Send 4-digit Login Code by Email
+    // ---------------------------------------
+    try {
+       await sendTeacherLoginCode(
+        result.teacher.email,
+        result.teacher.fullName,
+        result.teacher.loginCode
+      );
+
+      console.log(
+        "TEACHER LOGIN CODE EMAIL SENT TO:",
+        result.teacher.email
+      );
+
+      console.log(
+        "TEACHER LOGIN CODE EMAIL SENT TO:",
+        result.teacher.email
+      );
+    } catch (emailError) {
+      console.error(
+        "TEACHER EMAIL SEND ERROR:",
+        emailError
+      );
+    }
+
+    // ---------------------------------------
+    // Return JSON
     // ---------------------------------------
     return NextResponse.json(
       {
         success: true,
-        message: "Teacher created successfully",
+        message:
+          "Teacher created successfully and login code sent by email",
         teacher: result.teacher,
       },
       { status: 201 }

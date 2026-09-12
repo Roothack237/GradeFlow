@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -2176,7 +2175,7 @@ export default function ManageAccountsPage() {
                               password. The system
                               automatically generates a
                               4-digit access code and
-                              sends it to the user's
+                              sends it to the user
                               email.
                             </p>
                           </div>
@@ -2272,7 +2271,7 @@ export default function ManageAccountsPage() {
                                 <div className="grid gap-4 sm:grid-cols-2">
                                   <div>
                                     <label className="mb-2 block text-xs font-semibold text-gray-600 dark:text-gray-400">
-                                      Child's Name
+                                      Child Name
                                     </label>
 
                                     <input

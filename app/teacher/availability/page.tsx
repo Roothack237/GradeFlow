@@ -1,302 +1,498 @@
 "use client";
 
-import { useState } from "react";
-import TeacherSidebar from "@/components/teacher/TeacherSidebar";
-import TeacherNavbar from "@/components/teacher/TeacherNavbar";
+import { useEffect, useState } from "react";
 import {
-  Clock3,
-  Save,
-  CheckCircle2,
   CalendarDays,
+  Clock,
+  Plus,
+  Trash2,
+  Loader2,
+  CheckCircle2,
+  Clock3,
+  XCircle,
 } from "lucide-react";
 
+type AvailabilityStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
+
 type Availability = {
-  enabled: boolean;
-  start: string;
-  end: string;
+  id: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  status: AvailabilityStatus;
+  note?: string | null;
 };
 
-const initialAvailability: Record<string, Availability> = {
-  Monday: {
-    enabled: true,
-    start: "08:00",
-    end: "16:00",
-  },
-  Tuesday: {
-    enabled: true,
-    start: "08:00",
-    end: "16:00",
-  },
-  Wednesday: {
-    enabled: true,
-    start: "08:00",
-    end: "12:00",
-  },
-  Thursday: {
-    enabled: true,
-    start: "08:00",
-    end: "16:00",
-  },
-  Friday: {
-    enabled: true,
-    start: "08:00",
-    end: "14:00",
-  },
-  Saturday: {
-    enabled: false,
-    start: "08:00",
-    end: "12:00",
-  },
-  Sunday: {
-    enabled: false,
-    start: "08:00",
-    end: "12:00",
-  },
-};
-
-const days = Object.keys(initialAvailability);
+const DAYS = [
+  { value: "MONDAY", label: "Monday" },
+  { value: "TUESDAY", label: "Tuesday" },
+  { value: "WEDNESDAY", label: "Wednesday" },
+  { value: "THURSDAY", label: "Thursday" },
+  { value: "FRIDAY", label: "Friday" },
+];
 
 export default function TeacherAvailabilityPage() {
-  const [availability, setAvailability] =
-    useState(initialAvailability);
+  const [availability, setAvailability] = useState<
+    Availability[]
+  >([]);
 
-  const [saved, setSaved] = useState(false);
+  const [day, setDay] = useState("MONDAY");
+  const [startTime, setStartTime] = useState("08:00");
+  const [endTime, setEndTime] = useState("10:00");
+  const [note, setNote] = useState("");
 
-  function updateDay(
-    day: string,
-    field: keyof Availability,
-    value: boolean | string
-  ) {
-    setAvailability((current) => ({
-      ...current,
-      [day]: {
-        ...current[day],
-        [field]: value,
-      },
-    }));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
 
-    setSaved(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function loadAvailability() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await fetch(
+        "/api/teacher/availability"
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to load availability"
+        );
+      }
+
+      setAvailability(data);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load availability"
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function saveAvailability() {
-    console.log("Teacher availability:", availability);
+  useEffect(() => {
+    loadAvailability();
+  }, []);
 
-    setSaved(true);
+  async function handleSubmit(
+    e: React.FormEvent
+  ) {
+    e.preventDefault();
 
-    setTimeout(() => {
-      setSaved(false);
-    }, 3000);
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      if (startTime >= endTime) {
+        setError(
+          "End time must be after start time."
+        );
+        return;
+      }
+
+      const response = await fetch(
+        "/api/teacher/availability",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            day,
+            startTime,
+            endTime,
+            note: note.trim() || null,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to save availability"
+        );
+      }
+
+      setAvailability((current) => [
+        ...current,
+        data,
+      ]);
+
+      setMessage(
+        "Availability submitted successfully. It is now pending admin review."
+      );
+
+      setNote("");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to save availability"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      setDeletingId(id);
+      setError("");
+      setMessage("");
+
+      const response = await fetch(
+        `/api/teacher/availability?id=${id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to delete availability"
+        );
+      }
+
+      setAvailability((current) =>
+        current.filter((item) => item.id !== id)
+      );
+
+      setMessage("Availability deleted successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete availability"
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function getStatusBadge(
+    status: AvailabilityStatus
+  ) {
+    if (status === "APPROVED") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
+          <CheckCircle2 size={14} />
+          Approved
+        </span>
+      );
+    }
+
+    if (status === "REJECTED") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+          <XCircle size={14} />
+          Rejected
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-700">
+        <Clock3 size={14} />
+        Pending
+      </span>
+    );
+  }
+
+  function getDayLabel(dayValue: string) {
+    return (
+      DAYS.find(
+        (item) => item.value === dayValue
+      )?.label || dayValue
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <TeacherSidebar />
-
-      <div className="">
-        <TeacherNavbar
-          title="My Availability"
-          subtitle="Set the days and hours when you are available to teach."
-          teacherName="Teacher"
-          onMenuClick={() => {}}
-        />
-
-        <main className="p-5 sm:p-8">
-          <div className="mx-auto max-w-5xl">
-            {/* Header */}
-            <div className="mb-8">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-                  <Clock3 size={22} />
-                </div>
-
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                    Teaching Availability
-                  </h1>
-
-                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    Manage your weekly teaching availability.
-                  </p>
-                </div>
-              </div>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="mx-auto max-w-6xl">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-blue-100 p-3 text-blue-600">
+              <CalendarDays size={28} />
             </div>
 
-            {/* Information Card */}
-            <div className="mb-6 rounded-2xl border border-purple-100 bg-purple-50 p-5 dark:border-purple-900/40 dark:bg-purple-950/20">
-              <div className="flex gap-3">
-                <div className="mt-0.5 text-purple-600 dark:text-purple-400">
-                  <CalendarDays size={20} />
-                </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                My Availability
+              </h1>
 
-                <div>
-                  <h2 className="font-semibold text-purple-900 dark:text-purple-300">
-                    Availability Information
-                  </h2>
-
-                  <p className="mt-1 text-sm leading-6 text-purple-700 dark:text-purple-400">
-                    Your availability helps the school administrator
-                    create and adjust the timetable. Make sure your
-                    available hours are accurate.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Availability Table */}
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-              <div className="border-b border-gray-200 px-6 py-5 dark:border-gray-800">
-                <h2 className="font-semibold text-gray-900 dark:text-white">
-                  Weekly Availability
-                </h2>
-
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Enable a day and choose your available teaching hours.
-                </p>
-              </div>
-
-              <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                {days.map((day) => {
-                  const dayAvailability = availability[day];
-
-                  return (
-                    <div
-                      key={day}
-                      className="p-5 sm:p-6"
-                    >
-                      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                        {/* Day */}
-                        <div className="flex items-center gap-4 lg:w-52">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateDay(
-                                day,
-                                "enabled",
-                                !dayAvailability.enabled
-                              )
-                            }
-                            className={`relative h-6 w-11 rounded-full transition ${
-                              dayAvailability.enabled
-                                ? "bg-purple-700"
-                                : "bg-gray-300 dark:bg-gray-700"
-                            }`}
-                            aria-label={`Toggle ${day} availability`}
-                          >
-                            <span
-                              className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition ${
-                                dayAvailability.enabled
-                                  ? "left-6"
-                                  : "left-1"
-                              }`}
-                            />
-                          </button>
-
-                          <div>
-                            <p className="font-semibold text-gray-900 dark:text-white">
-                              {day}
-                            </p>
-
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                              {dayAvailability.enabled
-                                ? "Available"
-                                : "Unavailable"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Time Inputs */}
-                        <div className="flex flex-1 flex-col gap-4 sm:flex-row sm:items-end">
-                          <div className="flex-1">
-                            <label
-                              htmlFor={`${day}-start`}
-                              className="mb-2 block text-xs font-semibold text-gray-500 dark:text-gray-400"
-                            >
-                              START TIME
-                            </label>
-
-                            <input
-                              id={`${day}-start`}
-                              type="time"
-                              value={dayAvailability.start}
-                              disabled={!dayAvailability.enabled}
-                              onChange={(e) =>
-                                updateDay(
-                                  day,
-                                  "start",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                            />
-                          </div>
-
-                          <div className="hidden pb-3 text-gray-400 sm:block">
-                            —
-                          </div>
-
-                          <div className="flex-1">
-                            <label
-                              htmlFor={`${day}-end`}
-                              className="mb-2 block text-xs font-semibold text-gray-500 dark:text-gray-400"
-                            >
-                              END TIME
-                            </label>
-
-                            <input
-                              id={`${day}-end`}
-                              type="time"
-                              value={dayAvailability.end}
-                              disabled={!dayAvailability.enabled}
-                              onChange={(e) =>
-                                updateDay(
-                                  day,
-                                  "end",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Footer */}
-              <div className="flex flex-col gap-4 border-t border-gray-200 bg-gray-50 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6 dark:border-gray-800 dark:bg-gray-800/40">
-                <div className="flex items-center gap-2">
-                  {saved ? (
-                    <>
-                      <CheckCircle2
-                        size={18}
-                        className="text-green-600"
-                      />
-
-                      <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                        Availability saved successfully
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-sm text-gray-500 dark:text-gray-400">
-                      Remember to save your changes.
-                    </span>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={saveAvailability}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-800"
-                >
-                  <Save size={18} />
-                  Save Availability
-                </button>
-              </div>
+              <p className="text-sm text-gray-500">
+                Tell the administration when you are
+                available to teach.
+              </p>
             </div>
           </div>
-        </main>
+        </div>
+
+        {/* Messages */}
+        {message && (
+          <div className="mb-6 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+            <CheckCircle2
+              size={20}
+              className="mt-0.5 shrink-0"
+            />
+            <span>{message}</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+          {/* Add availability */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Add Availability
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Add a period when you can teach.
+              </p>
+            </div>
+
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-5"
+            >
+              {/* Day */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Day
+                </label>
+
+                <select
+                  value={day}
+                  onChange={(e) =>
+                    setDay(e.target.value)
+                  }
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  {DAYS.map((item) => (
+                    <option
+                      key={item.value}
+                      value={item.value}
+                    >
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Start time */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Start Time
+                </label>
+
+                <div className="relative">
+                  <Clock
+                    size={18}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) =>
+                      setStartTime(e.target.value)
+                    }
+                    className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* End time */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  End Time
+                </label>
+
+                <div className="relative">
+                  <Clock
+                    size={18}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) =>
+                      setEndTime(e.target.value)
+                    }
+                    className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Note */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Note{" "}
+                  <span className="font-normal text-gray-400">
+                    (optional)
+                  </span>
+                </label>
+
+                <textarea
+                  value={note}
+                  onChange={(e) =>
+                    setNote(e.target.value)
+                  }
+                  rows={3}
+                  placeholder="Example: Available for practical classes..."
+                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? (
+                  <>
+                    <Loader2
+                      size={18}
+                      className="animate-spin"
+                    />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Plus size={18} />
+                    Submit Availability
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+
+          {/* Availability list */}
+          <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-200 p-6">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Submitted Availability
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Your availability is reviewed by the
+                administration before being used for
+                timetable generation.
+              </p>
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center p-12">
+                <Loader2
+                  size={28}
+                  className="animate-spin text-blue-600"
+                />
+              </div>
+            ) : availability.length === 0 ? (
+              <div className="p-12 text-center">
+                <CalendarDays
+                  size={42}
+                  className="mx-auto mb-4 text-gray-300"
+                />
+
+                <h3 className="font-medium text-gray-700">
+                  No availability submitted
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Add your available teaching periods
+                  using the form.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {availability.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-semibold text-gray-900">
+                          {getDayLabel(item.day)}
+                        </h3>
+
+                        {getStatusBadge(
+                          item.status
+                        )}
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-2 text-sm text-gray-600">
+                        <Clock size={16} />
+
+                        <span>
+                          {item.startTime} –{" "}
+                          {item.endTime}
+                        </span>
+                      </div>
+
+                      {item.note && (
+                        <p className="mt-2 text-sm text-gray-500">
+                          {item.note}
+                        </p>
+                      )}
+                    </div>
+
+                    {item.status === "PENDING" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleDelete(item.id)
+                        }
+                        disabled={
+                          deletingId === item.id
+                        }
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {deletingId === item.id ? (
+                          <Loader2
+                            size={16}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

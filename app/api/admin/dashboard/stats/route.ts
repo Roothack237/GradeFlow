@@ -3,13 +3,17 @@ import prisma from "@/lib/prisma";
 
 export async function GET() {
   try {
-    const [students, teachers, parents, classes] =
-      await Promise.all([
-        prisma.student.count(),
-        prisma.teacher.count(),
-        prisma.parent.count(),
-        prisma.classroom.count(),
-      ]);
+    const students = await prisma.student.count();
+    console.log("Students:", students);
+
+    const teachers = await prisma.teacher.count();
+    console.log("Teachers:", teachers);
+
+    const parents = await prisma.parent.count();
+    console.log("Parents:", parents);
+
+    const classes = await prisma.classroom.count();
+    console.log("Classes:", classes);
 
     return NextResponse.json({
       students,
@@ -21,9 +25,7 @@ export async function GET() {
     console.error("DASHBOARD STATS API ERROR:", error);
 
     return NextResponse.json(
-      {
-        error: "Failed to load dashboard statistics",
-      },
+      { error: String(error) },
       { status: 500 }
     );
   }

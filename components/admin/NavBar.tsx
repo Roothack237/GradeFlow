@@ -3,7 +3,7 @@
 import { useTheme } from "next-themes";
 import { Bell, Moon, Sun, Menu} from "lucide-react";
 import { useEffect, useState } from "react";
-
+import Link from "next/link";
 
 interface NavbarProps {
   onMenuClick: () => void;
@@ -90,8 +90,12 @@ function toggleTheme() {
           {/* DIVIDER */}
           <div className="hidden h-8 w-px bg-gray-200 dark:bg-gray-700 sm:block" />
 
-          {/* ADMIN */}
-          <div className="flex items-center gap-3">
+          {/* ADMIN PROFILE */}
+          <Link
+            href="/admin/profile"
+            className="flex items-center gap-3 rounded-xl p-1.5 transition hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="View Profile"
+          >
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-900/60 font-bold text-purple-300">
               A
             </div>
@@ -105,7 +109,8 @@ function toggleTheme() {
                 School Admin
               </p>
             </div>
-          </div>
+          </Link>
+                    
         </div>
       </div>
     </header>
