@@ -22,6 +22,11 @@ type Classroom = {
     id: string;
     name: string;
   };
+  academicYear?: {
+    id: string;
+    name: string;
+    isActive: boolean;
+  };
   _count: {
     students: number;
   };
@@ -32,12 +37,43 @@ export default function ManageClassesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     loadClasses();
   }, []);
+
+  async function handleDelete(classroom: Classroom) {
+    const confirmed = window.confirm(
+      `Delete class "${classroom.name}"? This only works if it has no students, assignments or timetable entries.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(classroom.id);
+      setError("");
+
+      const response = await fetch(`/api/admin/classes/${classroom.id}`, {
+        method: "DELETE",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete class.");
+      }
+
+      setClasses((previous) => previous.filter((c) => c.id !== classroom.id));
+    } catch (err) {
+      console.error("DELETE CLASS ERROR:", err);
+      setError(err instanceof Error ? err.message : "Unable to delete class.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   async function loadClasses() {
     try {
@@ -115,14 +151,19 @@ export default function ManageClassesPage() {
                     </h1>
 
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                      All Anglophone and Francophone classes are displayed here.
+                      Anglophone and Francophone classes for the active
+                      academic year
+                      {classes[0]?.academicYear?.name
+                        ? ` (${classes[0].academicYear.name})`
+                        : ""}
+                      .
                     </p>
                   </div>
                 </div>
               </div>
 
               <Link
-                href="/admin/academic-years/classes"
+                href="/admin/classes/add"
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-purple-800"
               >
                 <Plus size={18} />
@@ -285,13 +326,10 @@ export default function ManageClassesPage() {
 
                               <button
                                 type="button"
-                                className="rounded-lg p-2 text-gray-500 transition hover:bg-red-50 hover:text-red-600 dark:text-gray-400 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                                disabled={deletingId === classroom.id}
+                                className="rounded-lg p-2 text-gray-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-red-950/30 dark:hover:text-red-400"
                                 title="Delete class"
-                                onClick={() =>
-                                  alert(
-                                    "Delete functionality will be added next."
-                                  )
-                                }
+                                onClick={() => handleDelete(classroom)}
                               >
                                 <Trash2 size={18} />
                               </button>

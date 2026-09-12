@@ -29,6 +29,61 @@ export async function GET() {
   }
 }
 
+export async function PATCH(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  try {
+    const body = await request.json();
+    const id = String(body.id ?? "").trim();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: "Academic year ID is required." },
+        { status: 400 }
+      );
+    }
+
+    const year = await prisma.academicYear.findUnique({ where: { id } });
+
+    if (!year) {
+      return NextResponse.json(
+        { error: "Academic year not found." },
+        { status: 404 }
+      );
+    }
+
+    if (body.isActive === true) {
+      // Exactly one academic year may be active at a time — this is what
+      // scopes the whole admin dashboard's "current year" context.
+      await prisma.$transaction([
+        prisma.academicYear.updateMany({
+          where: { isActive: true },
+          data: { isActive: false },
+        }),
+        prisma.academicYear.update({
+          where: { id },
+          data: { isActive: true },
+        }),
+      ]);
+    }
+
+    const updated = await prisma.academicYear.findUnique({ where: { id } });
+
+    return NextResponse.json({
+      message: "Academic year updated successfully.",
+      academicYear: updated,
+    });
+  } catch (error) {
+    console.error("UPDATE ACADEMIC YEAR ERROR:", error);
+
+    return NextResponse.json(
+      { error: "Failed to update academic year." },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;

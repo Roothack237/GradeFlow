@@ -7,10 +7,18 @@ export async function GET() {
   if (!guard.ok) return guard.response;
 
   try {
+    const activeYear = await prisma.academicYear.findFirst({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+
     const classrooms = await prisma.classroom.findMany({
+      where: activeYear ? { academicYearId: activeYear.id } : undefined,
       select: {
         id: true,
         name: true,
+        sectionId: true,
+        section: { select: { id: true, name: true } },
       },
       orderBy: {
         name: "asc",
@@ -19,6 +27,7 @@ export async function GET() {
 
     return NextResponse.json({
       classrooms,
+      academicYear: activeYear,
     });
   } catch (error) {
     console.error("FORM DATA ERROR:", error);
