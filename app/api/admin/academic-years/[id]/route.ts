@@ -71,9 +71,7 @@ export async function GET(
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load academic year.",
+          "Failed to load academic year.",
       },
       { status: 500 }
     );

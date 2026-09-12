@@ -55,9 +55,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load classes",
+          "Failed to load classes",
       },
       { status: 500 }
     );

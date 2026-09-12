@@ -309,9 +309,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create parent.",
+          "Failed to create parent.",
       },
       { status: 500 }
     );

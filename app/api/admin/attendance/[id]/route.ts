@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { logAudit } from "@/lib/audit";
 import { badRequest, notFound, serverError, str } from "@/lib/http";
+import { notifyGuardian } from "@/lib/notifications";
 import prisma from "@/lib/prisma";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -48,6 +49,23 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       entityId: id,
       description: `Changed attendance for ${existing.student.firstName} ${existing.student.lastName} from ${existing.status} to ${status}`,
     });
+
+    if (
+      (status === "ABSENT" || status === "LATE") &&
+      existing.status !== status
+    ) {
+      await notifyGuardian(existing.studentId, {
+        title: status === "ABSENT" ? "Absence recorded" : "Late arrival recorded",
+        message: `${existing.student.firstName} ${existing.student.lastName} was marked ${
+          status === "ABSENT" ? "absent" : "late"
+        } on ${existing.date.toLocaleDateString("en-GB")}.`,
+        type: "ATTENDANCE_ALERT",
+        senderId: guard.user.id,
+        actionUrl: "/parent/children",
+        relatedType: "Attendance",
+        relatedId: id,
+      });
+    }
 
     return NextResponse.json({
       message: "Attendance updated successfully.",

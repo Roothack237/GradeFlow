@@ -14,10 +14,12 @@ export async function GET() {
     });
 
     return NextResponse.json(sections);
-  } catch (error: any) {
+  } catch (error) {
+    console.error("GET SECTIONS ERROR:", error);
+
     return NextResponse.json(
       {
-        error: error.message,
+        error: "Failed to load sections. Please try again.",
       },
       { status: 500 }
     );

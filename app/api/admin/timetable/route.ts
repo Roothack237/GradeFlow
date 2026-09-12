@@ -532,9 +532,7 @@ export async function GET(request: Request) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load timetable data.",
+          "Failed to load timetable data.",
       },
       { status: 500 }
     );
@@ -1304,9 +1302,7 @@ export async function POST(request: Request) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to generate timetable",
+          "Failed to generate timetable",
       },
       { status: 500 }
     );

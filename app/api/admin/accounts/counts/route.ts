@@ -33,9 +33,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load account counts",
+          "Failed to load account counts",
       },
       {
         status: 500,

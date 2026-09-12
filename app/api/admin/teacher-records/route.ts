@@ -502,9 +502,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load teacher records.",
+          "Failed to load teacher records.",
       },
       {
         status: 500,

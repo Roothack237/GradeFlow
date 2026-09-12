@@ -30,7 +30,6 @@ export async function GET() {
         phone: true,
         gender: true,
         dateOfBirth: true,
-        loginCode: true,
         assignments: {
           select: {
             id: true,
@@ -71,7 +70,7 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: error?.message || "Failed to fetch teachers",
+        error: "Failed to fetch teachers. Please try again.",
         teachers: [],
       },
       { status: 500 }
@@ -273,7 +272,6 @@ if (gender) {
           phone: true,
           gender: true,
           dateOfBirth: true,
-          loginCode: true,
         },
       });
 
@@ -307,21 +305,13 @@ if (gender) {
     // Send 4-digit Login Code by Email
     // ---------------------------------------
     try {
-       await sendTeacherLoginCode(
+      await sendTeacherLoginCode(
         result.teacher.email,
         result.teacher.fullName,
-        result.teacher.loginCode
+        loginCode
       );
 
-      console.log(
-        "TEACHER LOGIN CODE EMAIL SENT TO:",
-        result.teacher.email
-      );
-
-      console.log(
-        "TEACHER LOGIN CODE EMAIL SENT TO:",
-        result.teacher.email
-      );
+      console.log("TEACHER LOGIN CODE EMAIL SENT TO:", result.teacher.email);
     } catch (emailError) {
       console.error(
         "TEACHER EMAIL SEND ERROR:",
@@ -348,7 +338,6 @@ if (gender) {
       {
         success: false,
         error:
-          error?.message ||
           "Failed to create teacher",
       },
       { status: 500 }

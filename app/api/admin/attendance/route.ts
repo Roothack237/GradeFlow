@@ -9,6 +9,7 @@ import {
   serverError,
   str,
 } from "@/lib/http";
+import { notifyGuardian } from "@/lib/notifications";
 import prisma from "@/lib/prisma";
 
 /**
@@ -275,6 +276,30 @@ export async function POST(request: Request) {
       description: `${existing ? "Updated" : "Recorded"} ${status.toLowerCase()} attendance for ${student.firstName} ${student.lastName}`,
       metadata: { subjectId, sequenceId, date: dateValue },
     });
+
+    /* Alert the family when a student is absent or late. Only sent when the
+       status actually changes, so correcting a record does not spam parents. */
+    if (
+      (status === "ABSENT" || status === "LATE") &&
+      existing?.status !== status
+    ) {
+      const subject = await prisma.subject.findUnique({
+        where: { id: subjectId },
+        select: { name: true },
+      });
+
+      await notifyGuardian(studentId, {
+        title: status === "ABSENT" ? "Absence recorded" : "Late arrival recorded",
+        message: `${student.firstName} ${student.lastName} was marked ${
+          status === "ABSENT" ? "absent" : "late"
+        } in ${subject?.name ?? "class"} on ${date.toLocaleDateString("en-GB")}.`,
+        type: "ATTENDANCE_ALERT",
+        senderId: guard.user.id,
+        actionUrl: "/parent/children",
+        relatedType: "Attendance",
+        relatedId: record.id,
+      });
+    }
 
     return NextResponse.json(
       {

@@ -130,3 +130,37 @@ export async function resolveAudience(options: {
       return [];
   }
 }
+
+/**
+ * Notifies the parent or guardian linked to a student. Returns a count of 0
+ * when the student has no linked parent account, so callers can ignore it.
+ */
+export async function notifyGuardian(
+  studentId: string,
+  input: {
+    title: string;
+    message: string;
+    type?: NotificationTypeValue;
+    senderId?: string | null;
+    actionUrl?: string | null;
+    relatedType?: string | null;
+    relatedId?: string | null;
+  }
+) {
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { parent: { select: { userId: true } } },
+  });
+
+  const userId = student?.parent?.userId;
+
+  if (!userId) return { count: 0 };
+
+  await createNotification({
+    userId,
+    audience: "CLASS",
+    ...input,
+  });
+
+  return { count: 1 };
+}

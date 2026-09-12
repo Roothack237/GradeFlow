@@ -23,9 +23,7 @@ console.error("GET SUBJECTS ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to load subjects",
+      "Failed to load subjects",
   },
   { status: 500 }
 );
@@ -105,9 +103,7 @@ console.error("CREATE SUBJECT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to create subject",
+      "Failed to create subject",
   },
   { status: 500 }
 );

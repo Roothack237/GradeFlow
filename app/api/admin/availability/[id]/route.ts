@@ -96,9 +96,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update availability",
+          "Failed to update availability",
       },
       { status: 500 }
     );

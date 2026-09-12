@@ -74,9 +74,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load teacher availability",
+          "Failed to load teacher availability",
       },
       { status: 500 }
     );

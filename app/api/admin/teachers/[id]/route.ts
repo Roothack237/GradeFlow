@@ -30,7 +30,6 @@ export async function GET(
         phone: true,
         gender: true,
         dateOfBirth: true,
-        loginCode: true,
 
         assignments: {
           select: {
@@ -86,9 +85,7 @@ export async function GET(
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch teacher",
+          "Failed to fetch teacher",
       },
       { status: 500 }
     );
@@ -260,7 +257,6 @@ export async function PUT(
           phone: true,
           gender: true,
           dateOfBirth: true,
-          loginCode: true,
         },
       });
 
@@ -308,7 +304,6 @@ export async function PUT(
       {
         success: false,
         error:
-          error?.message ||
           "Failed to update teacher",
       },
       { status: 500 }
@@ -382,7 +377,6 @@ export async function DELETE(
       {
         success: false,
         error:
-          error?.message ||
           "Failed to delete teacher",
       },
       { status: 500 }

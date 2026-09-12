@@ -58,9 +58,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load teacher assignments",
+          "Failed to load teacher assignments",
       },
       { status: 500 }
     );
@@ -285,7 +283,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error?.message ||
           "Failed to create teacher assignments",
       },
       {
@@ -358,7 +355,6 @@ export async function DELETE(request: Request) {
     return NextResponse.json(
       {
         error:
-          error?.message ||
           "Failed to remove teacher assignment",
       },
       {

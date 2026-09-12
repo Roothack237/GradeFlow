@@ -309,9 +309,7 @@ console.error("UPDATE PARENT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to update parent.",
+      "Failed to update parent.",
   },
   { status: 500 }
 );
@@ -390,9 +388,7 @@ console.error("DELETE PARENT ERROR:", error);
 return NextResponse.json(
   {
     error:
-      error instanceof Error
-        ? error.message
-        : "Failed to delete parent.",
+      "Failed to delete parent.",
   },
   { status: 500 }
 );

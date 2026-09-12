@@ -853,9 +853,7 @@ if (admin.role !== Role.ADMIN) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to generate timetable",
+          "Failed to generate timetable",
       },
       {
         status: 500,
