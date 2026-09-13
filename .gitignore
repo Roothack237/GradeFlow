@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local sandbox-only embedded Postgres instance used for development/testing
+/.devdb
+
 # vercel
 .vercel
 

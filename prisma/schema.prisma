@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "client"
 }
 
 datasource db {
@@ -204,7 +205,10 @@ model Classroom {
 
   sectionId String
 
-  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  academicYearId String
+
+  section      Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
   assignments         TeacherAssignment[]
   timetable           Timetable[]
@@ -212,7 +216,9 @@ model Classroom {
   resultPublications  ResultPublication[]
   sequencePublications SequencePublication[]
 
+  @@unique([academicYearId, sectionId, name])
   @@index([sectionId])
+  @@index([academicYearId])
   @@index([name])
 }
 
@@ -307,6 +313,7 @@ model AcademicYear {
 
   terms      Term[]
   timetables Timetable[]
+  classrooms Classroom[]
 
   @@index([isActive])
 }
