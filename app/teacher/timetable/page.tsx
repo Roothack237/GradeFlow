@@ -1,385 +1,308 @@
 "use client";
 
-import { useState } from "react";
-import TeacherSidebar from "@/components/teacher/TeacherSidebar";
-import TeacherNavbar from "@/components/teacher/TeacherNavbar";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertCircle,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   Clock3,
   MapPin,
+  BookOpen,
+  GraduationCap,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
 
-const timetable = [
-  {
-    day: "Monday",
-    lessons: [
-      {
-        time: "08:00 - 09:00",
-        subject: "Mathematics",
-        className: "Form 1 A",
-        room: "Room 101",
-      },
-      {
-        time: "10:00 - 11:00",
-        subject: "Mathematics",
-        className: "Form 2 B",
-        room: "Room 204",
-      },
-      {
-        time: "13:00 - 14:00",
-        subject: "Computer Science",
-        className: "Form 3 A",
-        room: "Computer Lab",
-      },
-    ],
-  },
-  {
-    day: "Tuesday",
-    lessons: [
-      {
-        time: "08:00 - 09:00",
-        subject: "Mathematics",
-        className: "Form 2 A",
-        room: "Room 202",
-      },
-      {
-        time: "11:00 - 12:00",
-        subject: "Mathematics",
-        className: "Form 1 B",
-        room: "Room 102",
-      },
-    ],
-  },
-  {
-    day: "Wednesday",
-    lessons: [
-      {
-        time: "09:00 - 10:00",
-        subject: "Computer Science",
-        className: "Form 3 B",
-        room: "Computer Lab",
-      },
-      {
-        time: "11:00 - 12:00",
-        subject: "Mathematics",
-        className: "Form 1 A",
-        room: "Room 101",
-      },
-    ],
-  },
-  {
-    day: "Thursday",
-    lessons: [
-      {
-        time: "08:00 - 09:00",
-        subject: "Mathematics",
-        className: "Form 2 B",
-        room: "Room 204",
-      },
-      {
-        time: "10:00 - 11:00",
-        subject: "Computer Science",
-        className: "Form 3 A",
-        room: "Computer Lab",
-      },
-      {
-        time: "14:00 - 15:00",
-        subject: "Mathematics",
-        className: "Form 1 B",
-        room: "Room 102",
-      },
-    ],
-  },
-  {
-    day: "Friday",
-    lessons: [
-      {
-        time: "08:00 - 09:00",
-        subject: "Mathematics",
-        className: "Form 1 A",
-        room: "Room 101",
-      },
-      {
-        time: "10:00 - 11:00",
-        subject: "Mathematics",
-        className: "Form 2 A",
-        room: "Room 202",
-      },
-    ],
-  },
-];
+type TimetableEntry = {
+  id: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  room: string | null;
+  subject: string;
+  class: string;
+  section: string;
+  term: string;
+};
 
-const weekDays = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-];
+type Publication = {
+  id: string;
+  class: string;
+  term: string;
+  publishedAt: string | null;
+};
+
+const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"];
+
+const DAY_LABELS: Record<string, string> = {
+  MONDAY: "Monday",
+  TUESDAY: "Tuesday",
+  WEDNESDAY: "Wednesday",
+  THURSDAY: "Thursday",
+  FRIDAY: "Friday",
+};
 
 export default function TeacherTimetablePage() {
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [entries, setEntries] = useState<TimetableEntry[]>([]);
+  const [publications, setPublications] = useState<Publication[]>([]);
+  const [academicYear, setAcademicYear] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadTimetable = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      setError("");
+
+      const response = await fetch("/api/teacher/timetable", {
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load the timetable.");
+      }
+
+      setEntries(data.entries ?? []);
+      setPublications(data.publications ?? []);
+      setAcademicYear(data.academicYear?.name ?? "");
+    } catch (err) {
+      console.error("Teacher Timetable Error:", err);
+
+      setError(
+        err instanceof Error ? err.message : "Failed to load the timetable."
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTimetable();
+  }, [loadTimetable]);
+
+  /* Near-real-time: refresh the timetable every 30 seconds. */
+  useEffect(() => {
+    const interval = setInterval(loadTimetable, 30000);
+
+    return () => clearInterval(interval);
+  }, [loadTimetable]);
+
+  const entriesByDay = useMemo(() => {
+    const map = new Map<string, TimetableEntry[]>();
+
+    for (const day of DAYS) {
+      map.set(day, []);
+    }
+
+    for (const entry of entries) {
+      const list = map.get(entry.day) ?? [];
+      list.push(entry);
+      map.set(entry.day, list);
+    }
+
+    for (const day of DAYS) {
+      map.get(day)?.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    }
+
+    return map;
+  }, [entries]);
+
+  const totalLessons = entries.length;
+
+  const weeklyHours = useMemo(() => {
+    let minutes = 0;
+
+    for (const entry of entries) {
+      const [startH, startM] = entry.startTime.split(":").map(Number);
+      const [endH, endM] = entry.endTime.split(":").map(Number);
+
+      minutes += endH * 60 + endM - (startH * 60 + startM);
+    }
+
+    return (minutes / 60).toFixed(1);
+  }, [entries]);
+
+  if (loading) {
+    return (
+      <main className="p-6 sm:p-8">
+        <div className="flex min-h-[400px] items-center justify-center">
+          <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+            <Loader2 size={24} className="animate-spin" />
+            <span>Loading your timetable...</span>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <TeacherSidebar />
+    <main className="p-6 sm:p-8">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+              My Timetable
+            </h1>
 
-      <div className="">
-        <TeacherNavbar
-          title="Timetable"
-          subtitle="View and manage your teaching schedule."
-          teacherName="Teacher"
-          onMenuClick={() => {}}
-        />
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {academicYear
+                ? `Your published teaching schedule for ${academicYear}.`
+                : "Your published teaching schedule."}
+            </p>
+          </div>
 
-        <main className="p-5 sm:p-8">
-          <div className="mx-auto max-w-7xl">
-            {/* Page Header */}
-            <div className="mb-8 flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-              <div>
-                <div className="mb-3 flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-                    <CalendarDays size={22} />
-                  </div>
+          <button
+            type="button"
+            onClick={loadTimetable}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-purple-300 hover:text-purple-700 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-purple-700 dark:hover:text-purple-300"
+          >
+            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
 
-                  <div>
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                      My Timetable
-                    </h1>
+        {/* Error */}
+        {error && (
+          <div className="mb-8 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/50 dark:bg-red-950/20">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={22} className="mt-0.5 text-red-600 dark:text-red-400" />
 
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Your weekly teaching schedule
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Week Navigation */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setWeekOffset((current) => current - 1)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-                  aria-label="Previous week"
-                >
-                  <ChevronLeft size={19} />
-                </button>
-
-                <div className="flex h-10 items-center rounded-xl border border-gray-200 bg-white px-5 text-sm font-semibold text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
-                  {weekOffset === 0
-                    ? "This Week"
-                    : weekOffset > 0
-                      ? `Week +${weekOffset}`
-                      : `Week ${weekOffset}`}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setWeekOffset((current) => current + 1)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-                  aria-label="Next week"
-                >
-                  <ChevronRight size={19} />
-                </button>
-              </div>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-                    <CalendarDays size={19} />
-                  </div>
-
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Weekly Classes
-                    </p>
-
-                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                      12
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
-                    <Clock3 size={19} />
-                  </div>
-
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Teaching Hours
-                    </p>
-
-                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                      12h
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400">
-                    <MapPin size={19} />
-                  </div>
-
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Rooms Used
-                    </p>
-
-                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                      5
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Timetable */}
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-              {/* Desktop Header */}
-              <div className="hidden border-b border-gray-200 bg-gray-50 md:grid md:grid-cols-5 dark:border-gray-800 dark:bg-gray-800/50">
-                {weekDays.map((day) => (
-                  <div
-                    key={day}
-                    className="border-r border-gray-200 px-4 py-4 text-center last:border-r-0 dark:border-gray-800"
-                  >
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">
-                      {day}
-                    </p>
-
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      {day === "Monday"
-                        ? "Aug 24"
-                        : day === "Tuesday"
-                          ? "Aug 25"
-                          : day === "Wednesday"
-                            ? "Aug 26"
-                            : day === "Thursday"
-                              ? "Aug 27"
-                              : "Aug 28"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Desktop Timetable */}
-              <div className="hidden md:grid md:grid-cols-5">
-                {timetable.map((day) => (
-                  <div
-                    key={day.day}
-                    className="min-h-[430px] border-r border-gray-200 p-3 last:border-r-0 dark:border-gray-800"
-                  >
-                    <div className="space-y-3">
-                      {day.lessons.map((lesson, index) => (
-                        <div
-                          key={`${day.day}-${index}`}
-                          className="rounded-xl border border-purple-100 bg-purple-50 p-4 transition hover:-translate-y-0.5 hover:shadow-md dark:border-purple-900/40 dark:bg-purple-950/20"
-                        >
-                          <p className="text-xs font-bold text-purple-700 dark:text-purple-400">
-                            {lesson.time}
-                          </p>
-
-                          <h3 className="mt-2 text-sm font-bold text-gray-900 dark:text-white">
-                            {lesson.subject}
-                          </h3>
-
-                          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                            {lesson.className}
-                          </p>
-
-                          <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                            <MapPin size={13} />
-                            {lesson.room}
-                          </div>
-                        </div>
-                      ))}
-
-                      {day.lessons.length === 0 && (
-                        <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-400 dark:border-gray-800">
-                          No classes
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Mobile Timetable */}
-              <div className="divide-y divide-gray-200 md:hidden dark:divide-gray-800">
-                {timetable.map((day) => (
-                  <div key={day.day} className="p-5">
-                    <div className="mb-4">
-                      <h2 className="font-bold text-gray-900 dark:text-white">
-                        {day.day}
-                      </h2>
-
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {day.lessons.length} classes
-                      </p>
-                    </div>
-
-                    <div className="space-y-3">
-                      {day.lessons.map((lesson, index) => (
-                        <div
-                          key={`${day.day}-mobile-${index}`}
-                          className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div>
-                              <p className="text-xs font-semibold text-purple-600 dark:text-purple-400">
-                                {lesson.time}
-                              </p>
-
-                              <h3 className="mt-1 font-semibold text-gray-900 dark:text-white">
-                                {lesson.subject}
-                              </h3>
-
-                              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                                {lesson.className}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-purple-50 p-2 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400">
-                              <CalendarDays size={17} />
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                            <MapPin size={14} />
-                            {lesson.room}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Legend */}
-            <div className="mt-5 flex flex-wrap items-center gap-5 text-xs text-gray-500 dark:text-gray-400">
-              <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-purple-600" />
-                Teaching Session
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-gray-300 dark:bg-gray-700" />
-                Free Period
-              </div>
+              <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
             </div>
           </div>
-        </main>
+        )}
+
+        {/* Stats */}
+        <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+              <BookOpen size={20} />
+            </div>
+
+            <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
+              {totalLessons}
+            </p>
+
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Lessons per week
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+              <Clock3 size={20} />
+            </div>
+
+            <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
+              {weeklyHours} h
+            </p>
+
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Teaching hours per week
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+              <GraduationCap size={20} />
+            </div>
+
+            <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
+              {new Set(entries.map((entry) => entry.class)).size}
+            </p>
+
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Classes in your schedule
+            </p>
+          </div>
+        </div>
+
+        {/* Published classes notice */}
+        {publications.length > 0 && (
+          <div className="mb-8 rounded-2xl border border-purple-200 bg-purple-50 p-4 text-sm text-purple-800 dark:border-purple-900/50 dark:bg-purple-950/20 dark:text-purple-300">
+            Published timetables:{" "}
+            {publications
+              .map((publication) => `${publication.class} (${publication.term})`)
+              .join(", ")}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {entries.length === 0 && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-10 text-center dark:border-gray-800 dark:bg-gray-900">
+            <CalendarDays size={40} className="mx-auto text-gray-300 dark:text-gray-600" />
+
+            <h2 className="mt-4 text-lg font-bold text-gray-900 dark:text-white">
+              No published timetable yet
+            </h2>
+
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              Your schedule appears here once the administration generates and
+              publishes the timetable for your classes.
+            </p>
+          </div>
+        )}
+
+        {/* Weekly schedule */}
+        {entries.length > 0 && (
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+            {DAYS.map((day) => {
+              const dayEntries = entriesByDay.get(day) ?? [];
+
+              return (
+                <section
+                  key={day}
+                  className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
+                >
+                  <h2 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-gray-900 dark:text-white">
+                    <CalendarDays size={15} className="text-purple-600 dark:text-purple-400" />
+                    {DAY_LABELS[day]}
+                  </h2>
+
+                  {dayEntries.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400 dark:border-gray-800 dark:text-gray-500">
+                      No lessons
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {dayEntries.map((entry) => (
+                        <article
+                          key={entry.id}
+                          className="rounded-xl border border-gray-100 bg-gradient-to-br from-purple-50 to-white p-3.5 transition hover:border-purple-300 dark:border-gray-800 dark:from-purple-950/30 dark:to-gray-900 dark:hover:border-purple-700"
+                        >
+                          <p className="text-xs font-semibold text-purple-700 dark:text-purple-300">
+                            {entry.startTime} – {entry.endTime}
+                          </p>
+
+                          <p className="mt-1.5 text-sm font-bold text-gray-900 dark:text-white">
+                            {entry.subject}
+                          </p>
+
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                            {entry.class}
+                          </p>
+
+                          {entry.room && (
+                            <p className="mt-2 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                              <MapPin size={12} />
+                              {entry.room}
+                            </p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
       </div>
-    </div>
+    </main>
   );
 }

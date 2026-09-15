@@ -25,13 +25,34 @@ export async function GET(
     }
 
     // ---------------------------------------------------------
-    // Get academic year
+    // Get academic year (with its terms and their sequences)
     // ---------------------------------------------------------
 
     const academicYear =
       await prisma.academicYear.findUnique({
         where: {
           id,
+        },
+        include: {
+          terms: {
+            orderBy: {
+              order: "asc",
+            },
+            include: {
+              _count: {
+                select: {
+                  sequences: true,
+                  reportCards: true,
+                  timetables: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              classrooms: true,
+            },
+          },
         },
       });
 
@@ -45,13 +66,29 @@ export async function GET(
     }
 
     // ---------------------------------------------------------
-    // Get the two school sections
+    // Get the two school sections with their class counts
+    // for THIS academic year
     // ---------------------------------------------------------
 
     const sections =
       await prisma.section.findMany({
         orderBy: {
           name: "asc",
+        },
+        include: {
+          classrooms: {
+            where: {
+              academicYearId: id,
+            },
+            select: {
+              id: true,
+              _count: {
+                select: {
+                  students: true,
+                },
+              },
+            },
+          },
         },
       });
 
@@ -60,8 +97,28 @@ export async function GET(
     // ---------------------------------------------------------
 
     return NextResponse.json({
-      academicYear,
-      sections,
+      academicYear: {
+        ...academicYear,
+        terms: academicYear.terms.map((term) => ({
+          id: term.id,
+          name: term.name,
+          order: term.order,
+          isCurrent: term.isCurrent,
+          sequences: term._count.sequences,
+          reportCards: term._count.reportCards,
+          timetables: term._count.timetables,
+        })),
+        classes: academicYear._count.classrooms,
+      },
+      sections: sections.map((section) => ({
+        id: section.id,
+        name: section.name,
+        classes: section.classrooms.length,
+        students: section.classrooms.reduce(
+          (total, classroom) => total + classroom._count.students,
+          0
+        ),
+      })),
     });
   } catch (error) {
     console.error(

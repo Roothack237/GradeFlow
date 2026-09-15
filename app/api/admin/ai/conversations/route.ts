@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { isAiConfigured } from "@/lib/ai";
+import { isGeminiConfigured } from "@/lib/gemini";
 import { badRequest, serverError, str } from "@/lib/http";
 import prisma from "@/lib/prisma";
 
@@ -31,7 +32,7 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      configured: isAiConfigured(),
+      configured: isGeminiConfigured() || isAiConfigured(),
       conversations: conversations.map((conversation) => ({
         id: conversation.id,
         title: conversation.title,

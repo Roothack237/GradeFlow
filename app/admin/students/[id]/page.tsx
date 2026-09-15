@@ -385,7 +385,7 @@ export default function StudentDetailPage() {
                           className={`h-full rounded-full ${
                             subject.average >= 70
                               ? "bg-emerald-500"
-                              : subject.average >= 50
+                              : subject.average >= 10
                                 ? "bg-amber-500"
                                 : "bg-red-500"
                           }`}

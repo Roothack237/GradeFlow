@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { badRequest, dateFrom, endOfDay, serverError, str } from "@/lib/http";
 import prisma from "@/lib/prisma";
+import { PASS_MARK, gradeOf } from "@/lib/grading";
 
 /**
  * GET /api/admin/reports
@@ -94,14 +95,7 @@ function round(value: number | null | undefined, digits = 2) {
   return Math.round(value * factor) / factor;
 }
 
-function gradeOf(average: number): string {
-  if (average >= 80) return "A";
-  if (average >= 70) return "B";
-  if (average >= 60) return "C";
-  if (average >= 50) return "D";
-  if (average >= 40) return "E";
-  return "F";
-}
+
 
 /* =========================================================
    STUDENT REPORT
@@ -389,7 +383,7 @@ async function classReport(options: {
 
     entry.total += mark.average;
     entry.count += 1;
-    if (mark.average >= 50) entry.passed += 1;
+    if (mark.average >= PASS_MARK) entry.passed += 1;
 
     studentStats.set(mark.studentId, entry);
   }
@@ -472,7 +466,7 @@ async function classReport(options: {
 
     entry.total += mark.average;
     entry.count += 1;
-    if (mark.average >= 50) entry.passed += 1;
+    if (mark.average >= PASS_MARK) entry.passed += 1;
 
     subjectStats.set(mark.subject.id, entry);
   }
@@ -514,7 +508,7 @@ async function classReport(options: {
       passRate:
         students.filter((student) => student.average !== null).length > 0
           ? round(
-              (students.filter((student) => (student.average ?? 0) >= 50).length /
+              (students.filter((student) => (student.average ?? 0) >= PASS_MARK).length /
                 students.filter((student) => student.average !== null).length) *
                 100,
               1
@@ -823,7 +817,7 @@ async function performanceReport(options: { termId?: string | null }) {
 
     entry.total += mark.average;
     entry.count += 1;
-    if (mark.average >= 50) entry.passed += 1;
+    if (mark.average >= PASS_MARK) entry.passed += 1;
     entry.students.add(mark.studentId);
 
     classStats.set(classId, entry);
@@ -877,7 +871,7 @@ async function performanceReport(options: { termId?: string | null }) {
 
     entry.total += mark.average;
     entry.count += 1;
-    if (mark.average >= 50) entry.passed += 1;
+    if (mark.average >= PASS_MARK) entry.passed += 1;
     entry.highest = Math.max(entry.highest, mark.average);
     entry.lowest = Math.min(entry.lowest, mark.average);
 
@@ -982,7 +976,7 @@ async function performanceReport(options: { termId?: string | null }) {
       average: globalAverage,
       passRate: allAverages.length
         ? round(
-            (allAverages.filter((value) => value >= 50).length /
+            (allAverages.filter((value) => value >= PASS_MARK).length /
               allAverages.length) *
               100,
             1

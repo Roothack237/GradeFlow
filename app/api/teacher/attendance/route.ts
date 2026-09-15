@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { notifyAdmins } from "@/lib/notifications";
+import { checkAbsenceAlerts } from "@/lib/absence-alerts";
 
 type AttendanceStatus =
   | "PRESENT"
@@ -282,6 +284,46 @@ export async function POST(req: Request) {
         });
 
       savedAttendance.push(attendance);
+    }
+
+    /*
+     * Notify the administration and run the absence alert check through the
+     * existing notification system. Failures here must never break the
+     * attendance submission.
+     */
+
+    try {
+      const classroomRecord = await prisma.classroom.findUnique({
+        where: { id: classroomId },
+        select: { name: true },
+      });
+
+      await notifyAdmins({
+        title: "Attendance submitted",
+        message: `${user.teacher.fullName} submitted attendance for ${
+          classroomRecord?.name ?? "a class"
+        }.`,
+        type: "INFO",
+        senderId: user.id,
+        relatedType: "ATTENDANCE",
+        relatedId: classroomId,
+        actionUrl: "/admin/attendance",
+      });
+    } catch (notificationError) {
+      console.error(
+        "ATTENDANCE SUBMISSION NOTIFICATION ERROR:",
+        notificationError
+      );
+    }
+
+    try {
+      await checkAbsenceAlerts({
+        studentIds: studentIds,
+        subjectId,
+        senderId: user.id,
+      });
+    } catch (alertError) {
+      console.error("ABSENCE ALERT CHECK ERROR:", alertError);
     }
 
     return NextResponse.json(

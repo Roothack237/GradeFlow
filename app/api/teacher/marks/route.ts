@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { notifyAdmins } from "@/lib/notifications";
 
 type SequenceName =
   | "First Sequence"
@@ -806,6 +807,43 @@ export async function POST(request: Request) {
 
       savedCount,
     });
+
+    /*
+     * Notify the administration through the existing notification system.
+     * A failure here must never break the marks submission.
+     */
+
+    try {
+      const [classroomRecord, subjectRecord] = await Promise.all([
+        prisma.classroom.findUnique({
+          where: { id: classroomId },
+          select: { name: true },
+        }),
+        prisma.subject.findUnique({
+          where: { id: subjectId },
+          select: { name: true },
+        }),
+      ]);
+
+      await notifyAdmins({
+        title: "Marks submitted",
+        message: `${teacher.fullName} submitted ${
+          classroomRecord?.name ?? "a class"
+        } ${subjectRecord?.name ?? ""} marks (${
+          selectedSequenceRecord.name
+        }).`.replace(/\s+/g, " "),
+        type: "MARK_UPDATE",
+        senderId: teacher.userId,
+        relatedType: "MARK",
+        relatedId: classroomId,
+        actionUrl: "/admin/results",
+      });
+    } catch (notificationError) {
+      console.error(
+        "MARKS SUBMISSION NOTIFICATION ERROR:",
+        notificationError
+      );
+    }
 
     /*
      * Return success response.

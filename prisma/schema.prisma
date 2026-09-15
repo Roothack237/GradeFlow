@@ -104,17 +104,18 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  notifications     Notification[]     @relation("NotificationRecipient")
-  sentNotifications Notification[]     @relation("NotificationSender")
-  aiRecommendations AIRecommendation[]
-  forumMessages     ForumMessage[]
-  aiConversations   AIConversation[]
-  auditLogs         AuditLog[]
-  publishedResults  ResultPublication[]
-  publishedSequences SequencePublication[]
-  forumPosts        ForumPost[]        @relation("ForumPostAuthor")
-  forumComments     ForumComment[]     @relation("ForumCommentAuthor")
-  forumReactions    ForumReaction[]    @relation("ForumReactionUser")
+  notifications       Notification[]         @relation("NotificationRecipient")
+  sentNotifications   Notification[]         @relation("NotificationSender")
+  aiRecommendations   AIRecommendation[]
+  forumMessages       ForumMessage[]
+  aiConversations     AIConversation[]
+  auditLogs           AuditLog[]
+  publishedResults    ResultPublication[]
+  publishedSequences  SequencePublication[]
+  publishedTimetables TimetablePublication[]
+  forumPosts          ForumPost[]            @relation("ForumPostAuthor")
+  forumComments       ForumComment[]         @relation("ForumCommentAuthor")
+  forumReactions      ForumReaction[]        @relation("ForumReactionUser")
 
   administrator Administrator?
   teacher       Teacher?
@@ -210,11 +211,12 @@ model Classroom {
   section      Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
-  assignments         TeacherAssignment[]
-  timetable           Timetable[]
-  students            Student[]
-  resultPublications  ResultPublication[]
-  sequencePublications SequencePublication[]
+  assignments           TeacherAssignment[]
+  timetable             Timetable[]
+  students              Student[]
+  resultPublications    ResultPublication[]
+  sequencePublications  SequencePublication[]
+  timetablePublications TimetablePublication[]
 
   @@unique([academicYearId, sectionId, name])
   @@index([sectionId])
@@ -328,10 +330,11 @@ model Term {
 
   academicYearId String
 
-  reportCards        ReportCard[]
-  sequences          Sequence[]
-  timetables         Timetable[]
-  resultPublications ResultPublication[]
+  reportCards           ReportCard[]
+  sequences             Sequence[]
+  timetables            Timetable[]
+  resultPublications    ResultPublication[]
+  timetablePublications TimetablePublication[]
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
 
@@ -527,8 +530,8 @@ model Notification {
 
   sender User? @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
 
-  audience   String?
-  actionUrl  String?
+  audience    String?
+  actionUrl   String?
   relatedType String?
   relatedId   String?
 
@@ -680,9 +683,9 @@ model ForumPost {
 
   views Int @default(0)
 
-  category ForumCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  author   User            @relation("ForumPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  comments ForumComment[]
+  category  ForumCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  author    User            @relation("ForumPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  comments  ForumComment[]
   reactions ForumReaction[]
 
   createdAt DateTime @default(now())
@@ -744,6 +747,8 @@ model Timetable {
   startTime String
   endTime   String
 
+  room String?
+
   classroom    Classroom    @relation(fields: [classroomId], references: [id])
   subject      Subject      @relation(fields: [subjectId], references: [id])
   teacher      Teacher      @relation(fields: [teacherId], references: [id])
@@ -756,6 +761,37 @@ model Timetable {
   @@index([classroomId, day])
   @@index([teacherId, day])
   @@index([termId])
+}
+
+/**
+ * Publication state of a class timetable for one term, following the same
+ * pattern as ResultPublication / SequencePublication. Teachers and parents
+ * only see timetable entries of classes whose timetable is PUBLISHED.
+ */
+model TimetablePublication {
+  id String @id @default(cuid())
+
+  termId      String
+  classroomId String
+
+  status PublicationStatus @default(DRAFT)
+
+  publishedById String?
+  publishedAt   DateTime?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  term        Term      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+
+  @@unique([termId, classroomId])
+  @@index([termId])
+  @@index([classroomId])
+  @@index([status])
 }
 
 model TeacherAvailability {

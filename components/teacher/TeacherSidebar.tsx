@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { useState } from "react";
 
 import {
@@ -257,6 +258,7 @@ export default function TeacherSidebar() {
 
             <button
               type="button"
+              onClick={() => signOut({ callbackUrl: "/login" })}
               className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-500 transition hover:bg-red-50 dark:hover:bg-red-950/30"
             >
               <LogOut size={18} />

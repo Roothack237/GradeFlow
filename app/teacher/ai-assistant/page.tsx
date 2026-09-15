@@ -1,22 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
+  BarChart3,
   Bot,
+  ClipboardCheck,
+  Lightbulb,
+  Loader2,
   Send,
   Sparkles,
-  User,
   Trash2,
-  Lightbulb,
-  BarChart3,
+  User,
   Users,
-  ClipboardCheck,
 } from "lucide-react";
 
 type Message = {
-  id: number;
+  id: string;
   role: "user" | "assistant";
-  text: string;
+  content: string;
 };
 
 const quickQuestions = [
@@ -28,72 +30,117 @@ const quickQuestions = [
   {
     icon: Users,
     title: "Identify weak students",
-    question: "Which students may need additional academic support?",
+    question:
+      "Which of my students may need additional academic support, and in which subjects?",
   },
   {
     icon: ClipboardCheck,
     title: "Attendance insights",
-    question: "Give me insights about my students' attendance.",
+    question:
+      "Give me insights about my students' attendance and highlight attendance problems.",
   },
   {
     icon: Lightbulb,
     title: "Teaching suggestions",
-    question: "Give me suggestions to improve my teaching effectiveness.",
+    question:
+      "Based on my marks and attendance data, suggest interventions and study strategies for my classes.",
   },
 ];
 
 export default function TeacherAIAssistantPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: 1,
+      id: "welcome",
       role: "assistant",
-      text: "Hello! I'm your GradeFlow AI Assistant. I can help you analyze student performance, attendance, and provide teaching recommendations. How can I help you today?",
+      content:
+        "Hello! I'm your GradeFlow AI Assistant. I analyze your real class data — marks, averages, attendance and trends — to identify weak and high-performing students, attendance problems, and to suggest interventions. How can I help you today?",
     },
   ]);
 
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [error, setError] = useState("");
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  function sendMessage(messageText?: string) {
-    const text = (messageText ?? input).trim();
+  useEffect(() => {
+    fetch("/api/ai/teacher")
+      .then((response) => response.json())
+      .then((data) => setConfigured(Boolean(data.configured)))
+      .catch(() => setConfigured(false));
+  }, []);
 
-    if (!text || isTyping) return;
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
 
-    const userMessage: Message = {
-      id: Date.now(),
-      role: "user",
-      text,
-    };
+  const sendMessage = useCallback(
+    async (messageText?: string) => {
+      const text = (messageText ?? input).trim();
 
-    setMessages((current) => [...current, userMessage]);
-    setInput("");
-    setIsTyping(true);
+      if (!text || isTyping) return;
 
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: "assistant",
-        text: generateResponse(text),
+      const userMessage: Message = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: text,
       };
 
-      setMessages((current) => [...current, assistantMessage]);
-      setIsTyping(false);
-    }, 900);
-  }
+      setMessages((current) => [...current, userMessage]);
+      setInput("");
+      setIsTyping(true);
+      setError("");
+
+      try {
+        const response = await fetch("/api/ai/teacher", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text, conversationId }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "The assistant could not answer.");
+        }
+
+        if (data.conversationId) {
+          setConversationId(data.conversationId);
+        }
+
+        setMessages((current) => [
+          ...current,
+          {
+            id: data.reply?.id ?? `assistant-${Date.now()}`,
+            role: "assistant",
+            content: data.reply?.content ?? "",
+          },
+        ]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "The assistant could not answer.");
+      } finally {
+        setIsTyping(false);
+      }
+    },
+    [input, isTyping, conversationId]
+  );
 
   function clearConversation() {
+    setConversationId(null);
+    setError("");
     setMessages([
       {
-        id: Date.now(),
+        id: `welcome-${Date.now()}`,
         role: "assistant",
-        text: "Conversation cleared. What would you like me to help you with?",
+        content: "Conversation cleared. What would you like me to analyze next?",
       },
     ]);
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      <div className="mx-auto max-w-7xl p-5 sm:p-8">
+    <main className="p-6 sm:p-8">
+      <div className="mx-auto max-w-5xl">
         {/* Header */}
         <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
@@ -107,228 +154,159 @@ export default function TeacherAIAssistantPage() {
               </span>
             </div>
 
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               AI Assistant
             </h1>
 
-            <p className="mt-1 text-gray-500 dark:text-gray-400">
-              Get intelligent insights and recommendations for your classes.
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Insights and recommendations computed from your real GradeFlow data.
             </p>
           </div>
 
           <button
             type="button"
             onClick={clearConversation}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-purple-300 hover:text-purple-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-purple-700 dark:hover:text-purple-300"
           >
-            <Trash2 size={17} />
-            Clear Chat
+            <Trash2 size={16} />
+            New conversation
           </button>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-          {/* Quick Questions */}
-          <aside className="h-fit rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-            <div className="mb-5">
-              <h2 className="font-semibold text-gray-900 dark:text-white">
-                Quick Questions
-              </h2>
+        {/* Not configured notice */}
+        {configured === false && (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
 
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Choose a question to get started.
+              <p>
+                The AI assistant is not configured on this server yet. Set the{" "}
+                <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs dark:bg-amber-900/40">
+                  GEMINI_API_KEY
+                </code>{" "}
+                environment variable to enable it.
               </p>
             </div>
+          </div>
+        )}
 
-            <div className="space-y-3">
-              {quickQuestions.map((item) => {
-                const Icon = item.icon;
-
-                return (
-                  <button
-                    key={item.title}
-                    type="button"
-                    onClick={() => sendMessage(item.question)}
-                    className="group w-full rounded-xl border border-gray-200 p-3 text-left transition hover:border-purple-300 hover:bg-purple-50 dark:border-gray-800 dark:hover:border-purple-700 dark:hover:bg-purple-950/20"
-                  >
-                    <div className="flex gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
-                        <Icon size={17} />
-                      </div>
-
-                      <div>
-                        <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                          {item.title}
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                          {item.question}
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* AI Info */}
-            <div className="mt-5 rounded-xl bg-purple-50 p-4 dark:bg-purple-950/20">
-              <div className="flex gap-3">
-                <Sparkles
-                  size={18}
-                  className="mt-0.5 shrink-0 text-purple-600 dark:text-purple-400"
-                />
-
-                <div>
-                  <p className="text-sm font-semibold text-purple-900 dark:text-purple-200">
-                    GradeFlow AI
-                  </p>
-
-                  <p className="mt-1 text-xs leading-5 text-purple-700 dark:text-purple-300">
-                    Ask questions about your students, classes, results,
-                    attendance, and teaching strategies.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </aside>
-
-          {/* Chat */}
-          <section className="flex min-h-[650px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-            {/* Chat Header */}
-            <div className="flex items-center gap-3 border-b border-gray-200 p-5 dark:border-gray-800">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-purple-700 to-indigo-600 text-white">
-                <Bot size={23} />
+        {/* Quick questions */}
+        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {quickQuestions.map((quick) => (
+            <button
+              key={quick.title}
+              type="button"
+              onClick={() => sendMessage(quick.question)}
+              disabled={isTyping || configured === false}
+              className="flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-left transition hover:border-purple-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-purple-700"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+                <quick.icon size={17} />
               </div>
 
               <div>
-                <h2 className="font-semibold text-gray-900 dark:text-white">
-                  GradeFlow Assistant
-                </h2>
+                <p className="text-sm font-bold text-gray-900 dark:text-white">
+                  {quick.title}
+                </p>
 
-                <div className="mt-0.5 flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-green-500" />
+                <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
+                  {quick.question}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
 
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    AI Assistant Online
+        {/* Chat */}
+        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+          <div className="max-h-[520px] space-y-4 overflow-y-auto p-5">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex items-start gap-3 ${
+                  message.role === "user" ? "flex-row-reverse" : ""
+                }`}
+              >
+                <div
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                    message.role === "user"
+                      ? "bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                      : "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
+                  }`}
+                >
+                  {message.role === "user" ? <User size={17} /> : <Bot size={17} />}
+                </div>
+
+                <div
+                  className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    message.role === "user"
+                      ? "bg-purple-700 text-white"
+                      : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100"
+                  }`}
+                >
+                  {message.content}
+                </div>
+              </div>
+            ))}
+
+            {isTyping && (
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+                  <Bot size={17} />
+                </div>
+
+                <div className="flex items-center gap-2 rounded-2xl bg-gray-100 px-4 py-3 dark:bg-gray-800">
+                  <Loader2 size={15} className="animate-spin text-gray-400" />
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    Analyzing your data...
                   </span>
                 </div>
               </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="border-t border-gray-100 px-5 py-3 text-sm text-red-600 dark:border-gray-800 dark:text-red-400">
+              {error}
             </div>
+          )}
 
-            {/* Messages */}
-            <div className="flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-3 ${
-                    message.role === "user"
-                      ? "justify-end"
-                      : "justify-start"
-                  }`}
-                >
-                  {message.role === "assistant" && (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
-                      <Bot size={18} />
-                    </div>
-                  )}
+          {/* Input */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              sendMessage();
+            }}
+            className="flex items-center gap-3 border-t border-gray-100 p-4 dark:border-gray-800"
+          >
+            <input
+              type="text"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Ask about your classes, marks, attendance..."
+              maxLength={2000}
+              disabled={isTyping || configured === false}
+              className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-purple-400 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-950 dark:text-white"
+            />
 
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-6 ${
-                      message.role === "user"
-                        ? "rounded-br-md bg-purple-700 text-white"
-                        : "rounded-bl-md bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                    }`}
-                  >
-                    {message.text}
-                  </div>
-
-                  {message.role === "user" && (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-200">
-                      <User size={18} />
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {isTyping && (
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
-                    <Bot size={18} />
-                  </div>
-
-                  <div className="rounded-2xl rounded-bl-md bg-gray-100 px-5 py-3 dark:bg-gray-800">
-                    <div className="flex gap-1">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-gray-400" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:150ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-gray-400 [animation-delay:300ms]" />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Input */}
-            <div className="border-t border-gray-200 p-4 dark:border-gray-800">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  sendMessage();
-                }}
-                className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-2 focus-within:border-purple-400 dark:border-gray-700 dark:bg-gray-800"
-              >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask GradeFlow AI anything..."
-                  className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
-                />
-
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isTyping}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-700 text-white transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Send message"
-                >
-                  <Send size={18} />
-                </button>
-              </form>
-
-              <p className="mt-2 text-center text-[11px] text-gray-400">
-                AI-generated recommendations should be reviewed before making
-                important academic decisions.
-              </p>
-            </div>
-          </section>
+            <button
+              type="submit"
+              disabled={!input.trim() || isTyping || configured === false}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-700 text-white transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send size={17} />
+            </button>
+          </form>
         </div>
+
+        <p className="mt-4 text-center text-xs text-gray-400 dark:text-gray-500">
+          Answers are generated by Gemini from your school data. Always verify
+          important decisions with the official records.
+        </p>
       </div>
     </main>
   );
-}
-
-/* =========================================================
-   TEMPORARY AI RESPONSE
-   Replace this with your real AI API later.
-========================================================= */
-
-function generateResponse(question: string): string {
-  const text = question.toLowerCase();
-
-  if (text.includes("performance")) {
-    return "Based on the available classroom information, I recommend reviewing students whose marks consistently fall below the class average. Pay particular attention to subjects where several students are struggling, as this may indicate a topic that needs to be retaught.";
-  }
-
-  if (text.includes("attendance")) {
-    return "Attendance can strongly affect academic performance. I recommend identifying students with repeated absences or lateness, checking whether there is a pattern, and communicating with parents when attendance becomes a concern.";
-  }
-
-  if (text.includes("student") || text.includes("support")) {
-    return "Students who consistently perform below expectations may benefit from additional exercises, one-on-one support, peer learning, and closer monitoring of their progress over the next assessment period.";
-  }
-
-  if (text.includes("teach") || text.includes("teaching")) {
-    return "Consider combining short explanations with practical exercises, classroom discussions, quizzes, and regular formative assessments. Reviewing performance trends can help you determine which teaching approaches work best for your students.";
-  }
-
-  return "I can help you analyze class performance, attendance, student progress, and teaching strategies. For more accurate recommendations, connect the assistant to your GradeFlow student and academic data.";
 }

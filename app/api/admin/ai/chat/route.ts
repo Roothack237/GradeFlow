@@ -2,14 +2,13 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { logAudit } from "@/lib/audit";
 import {
-  AI_SYSTEM_PROMPT,
-  AiNotConfiguredError,
-  AiProviderError,
-  askAi,
-  isAiConfigured,
-  type AiChatMessage,
-} from "@/lib/ai";
-import { buildSchoolContext, renderSchoolContext } from "@/lib/ai-context";
+  ADMIN_SYSTEM_PROMPT,
+  GeminiNotConfiguredError,
+  GeminiProviderError,
+  askGemini,
+  isGeminiConfigured,
+} from "@/lib/gemini";
+import { buildAdminAiContext, renderContext } from "@/lib/ai-context";
 import { badRequest, serverError, str } from "@/lib/http";
 import prisma from "@/lib/prisma";
 
@@ -20,7 +19,7 @@ const HISTORY_LIMIT = 12;
  * Body: { message: string, conversationId?: string }
  *
  * The assistant only ever receives aggregate school figures built on the
- * server (see buildSchoolContext) plus the recent turns of the conversation.
+ * server (see buildAdminAiContext) plus the recent turns of the conversation.
  * Both the question and the answer are stored in the database.
  */
 export async function POST(request: Request) {
@@ -39,10 +38,10 @@ export async function POST(request: Request) {
       return badRequest("Please keep the question under 2000 characters.");
     }
 
-    if (!isAiConfigured()) {
+    if (!isGeminiConfigured()) {
       return NextResponse.json(
         {
-          error: new AiNotConfiguredError().message,
+          error: new GeminiNotConfiguredError().message,
           code: "AI_NOT_CONFIGURED",
         },
         { status: 503 }
@@ -92,27 +91,24 @@ export async function POST(request: Request) {
 
     /* ---- build the prompt ---- */
 
-    const context = await buildSchoolContext();
+    const context = await buildAdminAiContext();
 
-    const messages: AiChatMessage[] = [
-      { role: "system", content: AI_SYSTEM_PROMPT },
-      {
-        role: "system",
-        content: `Current school data (JSON):\n${renderSchoolContext(context)}`,
-      },
-      ...history
-        .reverse()
-        .map((entry) => ({
-          role: entry.role === "USER" ? ("user" as const) : ("assistant" as const),
-          content: entry.content,
-        })),
-      { role: "user", content: message },
-    ];
-
-    /* ---- ask the provider ---- */
+    /* ---- ask Gemini ---- */
 
     try {
-      const answer = await askAi(messages);
+      const answer = await askGemini({
+        system: ADMIN_SYSTEM_PROMPT,
+        context: renderContext(context),
+        messages: [
+          ...history
+            .reverse()
+            .map((entry) => ({
+              role: entry.role === "USER" ? ("user" as const) : ("model" as const),
+              text: entry.content,
+            })),
+          { role: "user", text: message },
+        ],
+      });
 
       const stored = await prisma.aIMessage.create({
         data: {
@@ -148,7 +144,7 @@ export async function POST(request: Request) {
         model: answer.model,
       });
     } catch (error) {
-      if (error instanceof AiProviderError) {
+      if (error instanceof GeminiProviderError) {
         return NextResponse.json(
           { error: error.message, code: "AI_PROVIDER_ERROR" },
           { status: 502 }

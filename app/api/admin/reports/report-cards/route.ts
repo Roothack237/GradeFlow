@@ -4,6 +4,7 @@ import { logAudit } from "@/lib/audit";
 import { badRequest, serverError, str } from "@/lib/http";
 import { createManyNotifications } from "@/lib/notifications";
 import prisma from "@/lib/prisma";
+import { PASS_MARK } from "@/lib/grading";
 
 /**
  * POST /api/admin/reports/report-cards
@@ -147,7 +148,7 @@ export async function POST(request: Request) {
           update: {
             average,
             rank,
-            decision: average >= 50 ? "PROMOTED" : "REPEAT",
+            decision: average >= PASS_MARK ? "PROMOTED" : "REPEAT",
             principalRemark: `Term results generated from recorded marks on ${now.toLocaleDateString(
               "en-GB"
             )}.`,
@@ -157,7 +158,7 @@ export async function POST(request: Request) {
             termId,
             average,
             rank,
-            decision: average >= 50 ? "PROMOTED" : "REPEAT",
+            decision: average >= PASS_MARK ? "PROMOTED" : "REPEAT",
             principalRemark: `Term results generated from recorded marks on ${now.toLocaleDateString(
               "en-GB"
             )}.`,
