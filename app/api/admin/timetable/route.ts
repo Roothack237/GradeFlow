@@ -506,6 +506,29 @@ export async function GET(request: Request) {
       });
 
     // --------------------------------------------------
+    // PUBLICATION STATE PER CLASS (Phase 10)
+    // --------------------------------------------------
+
+    const publicationWhere: {
+      termId?: string;
+      term?: { academicYearId: string };
+    } = {};
+
+    if (termId) {
+      publicationWhere.termId = termId;
+    } else if (academicYearId) {
+      publicationWhere.term = { academicYearId };
+    }
+
+    const publications = await prisma.timetablePublication.findMany({
+      where: publicationWhere,
+      include: {
+        classroom: { select: { id: true, name: true } },
+        term: { select: { id: true, name: true } },
+      },
+    });
+
+    // --------------------------------------------------
     // RETURN DATA
     // --------------------------------------------------
 
@@ -521,6 +544,17 @@ export async function GET(request: Request) {
       availabilityCounts,
 
       timetable,
+
+      publications: publications.map((publication) => ({
+        id: publication.id,
+        termId: publication.termId,
+        classroomId: publication.classroomId,
+        class: publication.classroom.name,
+        term: publication.term.name,
+        status: publication.status,
+        publishedAt: publication.publishedAt,
+        notes: publication.notes,
+      })),
     });
   } catch (error) {
     console.error(

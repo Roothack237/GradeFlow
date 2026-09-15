@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { notifyAdmins } from "@/lib/notifications";
 import { AvailabilityStatus, WeekDay } from "@prisma/client";
 
 export async function GET() {
@@ -170,6 +171,33 @@ export async function POST(request: Request) {
           status: AvailabilityStatus.PENDING,
         },
       });
+
+    /*
+     * Notify the administration through the existing notification system.
+     * A failure here must never break the availability submission.
+     */
+
+    try {
+      const teacherProfile = await prisma.teacher.findUnique({
+        where: { id: teacher.id },
+        select: { fullName: true },
+      });
+
+      await notifyAdmins({
+        title: "Availability submitted",
+        message: `${teacherProfile?.fullName ?? "A teacher"} submitted a new availability slot (${day}, ${startTime}–${endTime}).`,
+        type: "INFO",
+        senderId: session.user.id,
+        relatedType: "AVAILABILITY",
+        relatedId: availability.id,
+        actionUrl: "/admin/availability",
+      });
+    } catch (notificationError) {
+      console.error(
+        "AVAILABILITY SUBMISSION NOTIFICATION ERROR:",
+        notificationError
+      );
+    }
 
     return NextResponse.json(
       availability,

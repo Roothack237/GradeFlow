@@ -1,209 +1,113 @@
-
 "use client";
 
-import { use } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import {
-  ArrowLeft,
-  BookOpen,
-  GraduationCap,
-} from "lucide-react";
+import { ArrowLeft, GraduationCap, Layers } from "lucide-react";
 
 import Sidebar from "@/components/admin/SideBar";
 import Navbar from "@/components/admin/NavBar";
+import SectionClasses from "@/components/admin/SectionClasses";
 
-const sectionData: Record<
-  string,
-  {
-    name: string;
-    language: "ANGLOPHONE" | "FRANCOPHONE";
-  }
-> = {
-  anglophone: {
-    name: "Anglophone Section",
-    language: "ANGLOPHONE",
-  },
-  francophone: {
-    name: "Francophone Section",
-    language: "FRANCOPHONE",
-  },
-};
+/**
+ * Academic Year → Section page (Phase 7/8).
+ * Lists the classes of the section for the academic year, loaded from
+ * Prisma. Accepts either the real section id or the "anglophone" /
+ * "francophone" slugs used by older links.
+ */
+export default function SectionPage() {
+  const params = useParams<{ id: string; sectionId: string }>();
+  const { id, sectionId } = params ?? {};
 
-export default function SectionPage({
-  params,
-}: {
-  params: Promise<{
-    id: string;
-    sectionId: string;
-  }>;
-}) {
-  const { id, sectionId } = use(params);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const section = sectionData[sectionId];
+  const [section, setSection] = useState<{ id: string; name: string } | null>(null);
 
-  const languageLabel =
-    section?.language === "ANGLOPHONE"
-      ? "Anglophone"
-      : "Francophone";
+  /* Resolve the section (slug or id) against the database. */
+  useEffect(() => {
+    if (!sectionId) return;
 
-  const sectionTitle =
-    section?.language === "ANGLOPHONE"
-      ? "Anglophone Section"
-      : "Francophone Section";
+    fetch("/api/admin/sections", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => {
+        const sections: { id: string; name: string }[] = data.sections ?? [];
+
+        const found =
+          sections.find((entry) => entry.id === sectionId) ??
+          sections.find(
+            (entry) => entry.name.toLowerCase() === sectionId.toLowerCase()
+          );
+
+        if (found) setSection(found);
+      })
+      .catch(() => undefined);
+  }, [sectionId]);
+
+  const isAnglophone = section?.name?.toUpperCase() === "ANGLOPHONE";
+
+  const sectionTitle = isAnglophone
+    ? "Anglophone Section"
+    : section?.name?.toUpperCase() === "FRANCOPHONE"
+      ? "Francophone Section"
+      : "Section";
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-white">
-      {/* SIDEBAR */}
-      <Sidebar
-        open={false}
-        onClose={() => {}}
-      />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      {/* MAIN */}
       <div className="min-h-screen lg:ml-72">
-        {/* NAVBAR */}
         <Navbar
-          onMenuClick={() => {}}
+          onMenuClick={() => setSidebarOpen(true)}
           title={sectionTitle}
-          subtitle={`${languageLabel} Academic section`}
+          subtitle="Classes of this section for the selected academic year."
         />
 
         <main className="min-h-screen bg-gray-50 p-5 dark:bg-gray-950 sm:p-8">
           <div className="mx-auto max-w-7xl">
+            {/* BACK */}
+            <Link
+              href={`/admin/academic-years/${id}`}
+              className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-purple-600 transition hover:text-purple-800 dark:text-purple-400"
+            >
+              <ArrowLeft size={16} />
+              Academic year
+            </Link>
 
             {/* HEADER */}
             <div className="mb-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                  <div
-                    className={`flex h-16 w-16 items-center justify-center rounded-2xl ${
-                      section?.language === "ANGLOPHONE"
-                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                        : "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                    }`}
-                  >
-                    <GraduationCap size={32} />
-                  </div>
+              <div className="flex items-center gap-4">
+                <div
+                  className={`flex h-16 w-16 items-center justify-center rounded-2xl ${
+                    isAnglophone
+                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                      : "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                  }`}
+                >
+                  <GraduationCap size={32} />
+                </div>
 
-                  <div>
-                    <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-                      {languageLabel}
-                    </p>
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-purple-600 dark:text-purple-400">
+                    <Layers size={14} />
+                    Section classes
+                  </p>
 
-                    <h1 className="mt-1 text-2xl font-bold">
-                      {sectionTitle}
-                    </h1>
-                  </div>
+                  <h1 className="mt-1 text-2xl font-bold">{sectionTitle}</h1>
                 </div>
               </div>
+            </div>
 
-              <p className="mt-4 text-gray-500 dark:text-gray-400">
-                Manage subjects and classes information for this section.
+            {id && section ? (
+              <SectionClasses
+                academicYearId={id}
+                sectionId={section.id}
+                basePath={`/admin/academic-years/${id}/sections/${section.id}`}
+              />
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Loading section…
               </p>
-            </div>
-
-            {/* SECTION OPTIONS */}
-            <div className="grid gap-5 md:grid-cols-2">
-
-              {/* CLASSES */}
-              <Link
-                href={`/admin/academic-years/${id}/sections/${sectionId}/classes`}
-                className="group rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:border-purple-300 hover:shadow-xl dark:border-gray-800 dark:bg-gray-900 dark:hover:border-purple-700"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                  <GraduationCap size={23} />
-                </div>
-
-                <h2 className="mt-5 text-lg font-bold">
-                  Classes
-                </h2>
-
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                  View and manage all classes in this section.
-                </p>
-
-                <div className="mt-5 flex items-center gap-2 text-sm font-semibold text-purple-600 dark:text-purple-400">
-                  Manage Classes
-
-                  <ArrowLeft
-                    size={16}
-                    className="rotate-180 transition-transform group-hover:translate-x-1"
-                  />
-                </div>
-              </Link>
-
-              {/* SUBJECTS */}
-              <Link
-                href={`/admin/academic-years/${id}/sections/${sectionId}/subjects`}
-                className="group rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:border-blue-300 hover:shadow-xl dark:border-gray-800 dark:bg-gray-900 dark:hover:border-blue-700"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                  <BookOpen size={23} />
-                </div>
-
-                <h2 className="mt-5 text-lg font-bold">
-                  Subjects
-                </h2>
-
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                  View and manage subjects for this section.
-                </p>
-
-                <div className="mt-5 flex items-center gap-2 text-sm font-semibold text-blue-600 dark:text-blue-400">
-                  Manage Subjects
-
-                  <ArrowLeft
-                    size={16}
-                    className="rotate-180 transition-transform group-hover:translate-x-1"
-                  />
-                </div>
-              </Link>
-            </div>
-
-            {/* SECTION INFORMATION */}
-            <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-              <h2 className="text-lg font-bold">
-                Section Information
-              </h2>
-
-              <div className="mt-5 grid gap-5 sm:grid-cols-3">
-
-                {/* SECTION */}
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Section
-                  </p>
-
-                  <p className="mt-1 font-semibold">
-                    {section?.name}
-                  </p>
-                </div>
-
-                {/* SYSTEM */}
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    System
-                  </p>
-
-                  <p className="mt-1 font-semibold">
-                    {languageLabel}
-                  </p>
-                </div>
-
-                {/* ACADEMIC YEAR ID */}
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Academic Year ID
-                  </p>
-
-                  <p className="mt-1 break-all font-mono text-sm">
-                    {id}
-                  </p>
-                </div>
-
-              </div>
-            </div>
-
+            )}
           </div>
         </main>
       </div>

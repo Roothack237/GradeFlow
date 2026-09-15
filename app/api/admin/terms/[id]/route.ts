@@ -6,6 +6,86 @@ import prisma from "@/lib/prisma";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+
+/**
+ * GET /api/admin/terms/[id]
+ *
+ * The term with its sequences and, for the term's academic year, the two
+ * school sections with their class counts. Powers the
+ * Academic Year → Term → Section navigation.
+ */
+export async function GET(_request: Request, { params }: RouteContext) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  try {
+    const { id } = await params;
+
+    const term = await prisma.term.findUnique({
+      where: { id },
+      include: {
+        sequences: { orderBy: { order: "asc" } },
+        academicYear: {
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+            startDate: true,
+            endDate: true,
+          },
+        },
+      },
+    });
+
+    if (!term) return notFound("Term not found.");
+
+    const sections = await prisma.section.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        classrooms: {
+          where: { academicYearId: term.academicYearId },
+          select: {
+            id: true,
+            name: true,
+            _count: { select: { students: true, assignments: true } },
+          },
+          orderBy: { name: "asc" },
+        },
+      },
+    });
+
+    return NextResponse.json({
+      term: {
+        id: term.id,
+        name: term.name,
+        order: term.order,
+        isCurrent: term.isCurrent,
+        sequences: term.sequences.map((sequence) => ({
+          id: sequence.id,
+          name: sequence.name,
+          order: sequence.order,
+          createdAt: sequence.createdAt,
+        })),
+        academicYear: term.academicYear,
+      },
+      sections: sections.map((section) => ({
+        id: section.id,
+        name: section.name,
+        classes: section.classrooms.length,
+        students: section.classrooms.reduce(
+          (total, classroom) => total + classroom._count.students,
+          0
+        ),
+        classrooms: section.classrooms,
+      })),
+    });
+  } catch (error) {
+    return serverError("GET TERM ERROR", error);
+  }
+}
+
 /**
  * PATCH /api/admin/terms/[id]
  * Rename / reorder a term, or make it the current term.

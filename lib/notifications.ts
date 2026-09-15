@@ -132,6 +132,24 @@ export async function resolveAudience(options: {
 }
 
 /**
+ * Notifies every administrator account. Used when teachers submit marks,
+ * attendance or availability so the administration stays informed.
+ */
+export async function notifyAdmins(
+  input: Omit<CreateNotificationInput, "userId">
+) {
+  const admins = await prisma.user.findMany({
+    where: { role: "ADMIN", status: { not: "SUSPENDED" } },
+    select: { id: true },
+  });
+
+  return createManyNotifications(
+    admins.map((admin) => admin.id),
+    input
+  );
+}
+
+/**
  * Notifies the parent or guardian linked to a student. Returns a count of 0
  * when the student has no linked parent account, so callers can ignore it.
  */

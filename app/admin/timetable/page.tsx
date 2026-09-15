@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock3,
   Eye,
+  EyeOff,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -89,6 +90,17 @@ type AvailabilityCounts = {
   pending: number;
   ready: number;
   rejected: number;
+};
+
+type Publication = {
+  id: string;
+  termId: string;
+  classroomId: string;
+  class: string;
+  term: string;
+  status: "DRAFT" | "PUBLISHED" | "UNPUBLISHED";
+  publishedAt: string | null;
+  notes: string | null;
 };
 
 type TimetableEntry = {
@@ -228,6 +240,12 @@ export default function TimetablePage() {
     });
 
   const [timetable, setTimetable] = useState<TimetableEntry[]>([]);
+
+  const [publications, setPublications] = useState<Publication[]>([]);
+
+  const [rooms, setRooms] = useState<Record<string, string>>({});
+
+  const [publishing, setPublishing] = useState<string | null>(null);
   const [unscheduled, setUnscheduled] = useState<
     UnscheduledAssignment[]
   >([]);
@@ -247,6 +265,53 @@ export default function TimetablePage() {
   const currentYear = academicYears.find(
     (year) => year.id === academicYearId
   );
+
+  async function publishTimetable(
+    classroomId: string,
+    action: "PUBLISH" | "UNPUBLISH"
+  ) {
+    if (!termId) {
+      setError("Select a term first.");
+      return;
+    }
+
+    try {
+      setPublishing(classroomId);
+
+      const response = await fetch("/api/admin/timetable/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termId,
+          classroomId,
+          action,
+          room: classroomId === "all" ? null : rooms[classroomId]?.trim() || null,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update the publication.");
+      }
+
+      setSuccess(
+        action === "PUBLISH"
+          ? "Timetable published — teachers and parents can now see it."
+          : "Timetable unpublished — it is now hidden from teachers and parents."
+      );
+
+      await loadTimetableData();
+    } catch (err) {
+      console.error("PUBLISH TIMETABLE ERROR:", err);
+
+      setError(
+        err instanceof Error ? err.message : "Failed to update the publication."
+      );
+    } finally {
+      setPublishing(null);
+    }
+  }
 
   async function loadTimetableData() {
     try {
@@ -296,6 +361,8 @@ export default function TimetablePage() {
       );
 
       setTimetable(data?.timetable ?? []);
+
+      setPublications(data?.publications ?? []);
       setUnscheduled(data?.unscheduled ?? []);
 
       if (!academicYearId && data?.academicYears?.length) {
@@ -866,6 +933,146 @@ export default function TimetablePage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </section>
+          )}
+
+          {/* PUBLICATIONS */}
+          {termId && timetable.length > 0 && (
+            <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="flex flex-col gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="font-bold text-gray-900 dark:text-white">
+                    Publish Timetables
+                  </h2>
+
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    A timetable is only visible to teachers and parents after
+                    it is published.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => publishTimetable("all", "PUBLISH")}
+                  disabled={publishing === "all"}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {publishing === "all" ? (
+                    <Loader2 size={17} className="animate-spin" />
+                  ) : (
+                    <CheckCircle2 size={17} />
+                  )}
+
+                  Publish all classes
+                </button>
+              </div>
+
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                {Array.from(
+                  timetable
+                    .reduce((map, entry) => {
+                      const current = map.get(entry.classroom.id);
+
+                      if (!current) {
+                        map.set(entry.classroom.id, {
+                          id: entry.classroom.id,
+                          name: entry.classroom.name,
+                          entries: 0,
+                        });
+                      }
+
+                      const record = map.get(entry.classroom.id);
+
+                      if (record) record.entries += 1;
+
+                      return map;
+                    }, new Map<string, { id: string; name: string; entries: number }>())
+                    .values()
+                )
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((klass) => {
+                    const publication = publications.find(
+                      (item) =>
+                        item.classroomId === klass.id && item.termId === termId
+                    );
+
+                    const isPublished = publication?.status === "PUBLISHED";
+
+                    return (
+                      <div
+                        key={klass.id}
+                        className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold text-gray-900 dark:text-white">
+                              {klass.name}
+                            </p>
+
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                                isPublished
+                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                              }`}
+                            >
+                              {isPublished ? "PUBLISHED" : "DRAFT"}
+                            </span>
+                          </div>
+
+                          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                            {klass.entries} timetable entr
+                            {klass.entries === 1 ? "y" : "ies"}
+                            {publication?.publishedAt
+                              ? ` · published ${new Date(
+                                  publication.publishedAt
+                                ).toLocaleDateString()}`
+                              : ""}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="Room (e.g. Room 12)"
+                            value={rooms[klass.id] ?? ""}
+                            onChange={(event) =>
+                              setRooms((previous) => ({
+                                ...previous,
+                                [klass.id]: event.target.value,
+                              }))
+                            }
+                            className="w-40 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                          />
+
+                          <button
+                            onClick={() =>
+                              publishTimetable(
+                                klass.id,
+                                isPublished ? "UNPUBLISH" : "PUBLISH"
+                              )
+                            }
+                            disabled={publishing === klass.id}
+                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                              isPublished
+                                ? "bg-gray-600 hover:bg-gray-700"
+                                : "bg-blue-600 hover:bg-blue-700"
+                            }`}
+                          >
+                            {publishing === klass.id ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : isPublished ? (
+                              <EyeOff size={15} />
+                            ) : (
+                              <Eye size={15} />
+                            )}
+
+                            {isPublished ? "Unpublish" : "Publish"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </section>
           )}

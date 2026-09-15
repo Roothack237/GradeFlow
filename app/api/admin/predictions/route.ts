@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { serverError, str } from "@/lib/http";
 import prisma from "@/lib/prisma";
+import { MAX_MARK, PASS_MARK } from "@/lib/grading";
 
 /**
  * GET /api/admin/predictions
@@ -99,7 +100,7 @@ export async function GET(request: Request) {
     const MODEL = {
       name: "GradeFlow weighted trend model",
       description:
-        "The next sequence average is projected from the marks already recorded, then blended with the attendance rate. The pass probability is the logistic of the projected average around the 50/100 pass mark.",
+        "The next sequence average is projected from the marks already recorded (20-point scale), then blended with the attendance rate. The pass probability is the logistic of the projected average around the 10/20 pass mark.",
       projectedAverage:
         "projected = currentAverage + 0.5 × (lastSequenceAverage − previousSequenceAverage), clamped to 0…100. With a single sequence the current average is used.",
       passProbability:
@@ -188,20 +189,20 @@ export async function GET(request: Request) {
           : currentAverage + (trend === null ? 0 : 0.5 * trend);
 
       if (projected !== null) {
-        if (attendanceRate !== null && attendanceRate < 60) projected -= 10;
-        else if (attendanceRate !== null && attendanceRate < 75) projected -= 5;
+        if (attendanceRate !== null && attendanceRate < 60) projected -= 2;
+        else if (attendanceRate !== null && attendanceRate < 75) projected -= 1;
 
-        projected = Math.min(100, Math.max(0, projected));
+        projected = Math.min(MAX_MARK, Math.max(0, projected));
       }
 
       const probability =
         projected === null
           ? null
-          : (1 / (1 + Math.exp(-(projected - 50) / 8))) * 100;
+          : (1 / (1 + Math.exp(-(projected - PASS_MARK) / 2))) * 100;
 
       const factors: string[] = [];
 
-      if (currentAverage !== null && currentAverage < 50) {
+      if (currentAverage !== null && currentAverage < PASS_MARK) {
         factors.push("Current average is below the pass mark");
       }
 
@@ -224,9 +225,9 @@ export async function GET(request: Request) {
       const riskLevel =
         projected === null
           ? "UNKNOWN"
-          : projected < 45 || (attendanceRate !== null && attendanceRate < 60)
+          : projected < 9 || (attendanceRate !== null && attendanceRate < 60)
             ? "HIGH"
-            : projected < 55 ||
+            : projected < 11 ||
                 (attendanceRate !== null && attendanceRate < 75) ||
                 (trend !== null && trend < -3)
               ? "MEDIUM"
@@ -296,7 +297,7 @@ export async function GET(request: Request) {
 
         entry.total += mark.average;
         entry.count += 1;
-        if (mark.average < 50) entry.atRisk += 1;
+        if (mark.average < PASS_MARK) entry.atRisk += 1;
 
         subjectMap.set(mark.subject.id, entry);
       }

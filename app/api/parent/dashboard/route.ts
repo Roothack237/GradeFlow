@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
@@ -33,7 +32,11 @@ export async function GET() {
 
         children: {
           include: {
-            classroom: true,
+            classroom: {
+              include: {
+                section: true,
+              },
+            },
             marks: true,
             attendances: true,
           },
@@ -69,7 +72,7 @@ export async function GET() {
 
     // Format children
     const children = parent.children.map((child) => {
-      // Calculate average
+      // Calculate average from the recorded marks
       const average =
         child.marks.length > 0
           ? child.marks.reduce(
@@ -78,9 +81,15 @@ export async function GET() {
             ) / child.marks.length
           : 0;
 
-      // Attendance
+      // Attendance rate from the recorded attendance
+      const attended = child.attendances.filter(
+        (record) => record.status === "PRESENT" || record.status === "LATE"
+      ).length;
+
       const attendance =
-        child.attendances.length > 0 ? 100 : 0;
+        child.attendances.length > 0
+          ? Math.round((attended / child.attendances.length) * 100)
+          : 0;
 
       // Child initials
       const initials =
@@ -120,8 +129,11 @@ export async function GET() {
         // Classroom ID
         classroomId: child.classroomId,
 
-        // Section
-        section: "Anglophone" as const,
+        // Section (from the classroom, never hardcoded)
+        section:
+          child.classroom?.section?.name === "FRANCOPHONE"
+            ? "Francophone"
+            : "Anglophone",
 
         // Academic information
         average: Number(average.toFixed(1)),
@@ -130,6 +142,13 @@ export async function GET() {
         // Initials
         initials,
       };
+    });
+
+    // Latest notifications for the parent
+    const notificationRecords = await prisma.notification.findMany({
+      where: { userId: parent.userId, archivedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 5,
     });
 
     return NextResponse.json({
@@ -157,7 +176,14 @@ export async function GET() {
       children,
 
       // Notifications
-      notifications: [],
+      notifications: notificationRecords.map((notification) => ({
+        id: notification.id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        read: notification.isRead,
+        createdAt: notification.createdAt,
+      })),
     });
   } catch (error) {
     console.error(

@@ -691,7 +691,7 @@ export default function ResultsPage() {
                           className={`h-full rounded-full ${
                             (classroom.average ?? 0) >= 70
                               ? "bg-emerald-500"
-                              : (classroom.average ?? 0) >= 50
+                              : (classroom.average ?? 0) >= 10
                                 ? "bg-amber-500"
                                 : "bg-red-500"
                           }`}
@@ -732,7 +732,7 @@ export default function ResultsPage() {
                           className={`h-full rounded-full ${
                             (subject.average ?? 0) >= 70
                               ? "bg-emerald-500"
-                              : (subject.average ?? 0) >= 50
+                              : (subject.average ?? 0) >= 10
                                 ? "bg-amber-500"
                                 : "bg-red-500"
                           }`}

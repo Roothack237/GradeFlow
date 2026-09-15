@@ -737,6 +737,24 @@ if (admin.role !== Role.ADMIN) {
         });
 
         // ----------------------------------------------
+        // A regenerated timetable is a new draft: reset
+        // the publication state so it must be published
+        // again before teachers and parents see it.
+        // ----------------------------------------------
+
+        await tx.timetablePublication.updateMany({
+          where: {
+            termId,
+          },
+
+          data: {
+            status: "DRAFT",
+
+            publishedAt: null,
+          },
+        });
+
+        // ----------------------------------------------
         // Create new timetable
         // ----------------------------------------------
 
