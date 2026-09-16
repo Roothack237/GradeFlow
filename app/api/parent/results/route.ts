@@ -142,11 +142,20 @@ export async function GET(request: Request) {
       terms: termResults,
       reportCards: reportCards.map((card) => ({
         id: card.id,
+        termId: card.termId,
         term: `${card.term.academicYear.name} · ${card.term.name}`,
         average: card.average,
         rank: card.rank,
         decision: card.decision,
         principalRemark: card.principalRemark,
+        /* The generated PDF of this report card, served from /public. It is
+           only ever exposed once the class results are published, exactly
+           like the marks above. */
+        pdfUrl:
+          publicationByTerm.get(card.termId)?.status === "PUBLISHED"
+            ? card.pdfUrl
+            : null,
+        published: publicationByTerm.get(card.termId)?.status === "PUBLISHED",
         createdAt: card.createdAt,
       })),
       scale: { maxMark: 20, passMark: PASS_MARK },

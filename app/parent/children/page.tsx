@@ -19,6 +19,8 @@ type Child = {
   fullName: string;
   matricule: string;
   gender: string;
+  status?: string;
+  statusLabel?: string;
   classroom: {
     id: string;
     name: string;
@@ -161,6 +163,31 @@ export default function ChildrenPage() {
                       Gender:{" "}
                       <span className="font-medium">
                         {child.gender}
+                      </span>
+                    </div>
+
+                    {/* Enrolment status */}
+                    <div className="mt-3">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          child.status === "ACTIVE"
+                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            : child.status === "SUSPENDED"
+                              ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                              : child.status === "DISMISSED"
+                                ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                        }`}
+                      >
+                        Status:{" "}
+                        {child.statusLabel ??
+                          (child.status === "ACTIVE"
+                            ? "Active"
+                            : child.status === "SUSPENDED"
+                              ? "Suspended"
+                              : child.status === "DISMISSED"
+                                ? "Dismissed"
+                                : "Pending")}
                       </span>
                     </div>
 

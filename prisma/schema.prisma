@@ -24,9 +24,21 @@ enum SectionType {
   FRANCOPHONE
 }
 
+/**
+ * Lifecycle of a student (and of any account):
+ *
+ *   ACTIVE     — enrolled, normal academic operations continue.
+ *   SUSPENDED  — temporarily barred from normal academic operations, but the
+ *                student, their marks, attendance and history are kept.
+ *   DISMISSED  — permanently removed from the current rolls. The record is
+ *                never deleted: historical marks, attendance, report cards
+ *                and the parent relationship are all preserved.
+ *   PENDING    — registered but not yet confirmed (accounts).
+ */
 enum AccountStatus {
   ACTIVE
   SUSPENDED
+  DISMISSED
   PENDING
 }
 

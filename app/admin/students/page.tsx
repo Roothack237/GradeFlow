@@ -13,9 +13,25 @@ import {
   Filter,
   X,
   GraduationCap,
+  ShieldOff,
+  XCircle,
+  RotateCcw,
+  History,
 } from "lucide-react";
 
 import AdminShell from "@/components/admin/AdminShell";
+import StudentStatusDialog, {
+  type StudentStatusTarget,
+} from "@/components/admin/StudentStatusDialog";
+import {
+  STUDENT_STATUSES,
+  STUDENT_STATUS_LABELS,
+  actionLabel,
+  availableStatusActions,
+  statusLabel,
+  statusTone,
+  type StudentStatusAction,
+} from "@/lib/student-status";
 import {
   Badge,
   Button,
@@ -48,7 +64,7 @@ type Student = {
   fullName: string;
   gender: "MALE" | "FEMALE";
   dateOfBirth: string;
-  status: "ACTIVE" | "SUSPENDED" | "PENDING";
+  status: "ACTIVE" | "SUSPENDED" | "DISMISSED" | "PENDING";
   className: string | null;
   classroomId: string;
   sectionName: string | null;
@@ -75,12 +91,6 @@ const EMPTY_FORM = {
   parentId: "",
   status: "ACTIVE",
   matricule: "",
-};
-
-const STATUS_TONES: Record<string, "green" | "red" | "amber"> = {
-  ACTIVE: "green",
-  SUSPENDED: "red",
-  PENDING: "amber",
 };
 
 /* =========================================================
@@ -114,6 +124,11 @@ export default function StudentsPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [statusTarget, setStatusTarget] = useState<{
+    student: Student;
+    action: StudentStatusAction;
+  } | null>(null);
 
   /* ---------------- debounce search ---------------- */
 
@@ -256,24 +271,6 @@ export default function StudentsPage() {
     }
   }
 
-  async function changeStatus(student: Student, status: string) {
-    try {
-      const response = await fetch(`/api/admin/students/${student.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-
-      if (!response.ok) throw new Error("failed");
-
-      setToast(`Status changed to ${status.toLowerCase()}.`);
-      loadStudents();
-    } catch {
-      setToast("");
-      setError("Unable to change the student status.");
-    }
-  }
-
   async function confirmDelete() {
     if (!deleteTarget) return;
 
@@ -396,9 +393,11 @@ export default function StudentsPage() {
                 }}
               >
                 <option value="">All statuses</option>
-                <option value="ACTIVE">Active</option>
-                <option value="PENDING">Pending</option>
-                <option value="SUSPENDED">Suspended</option>
+                {STUDENT_STATUSES.map((value) => (
+                  <option key={value} value={value}>
+                    {STUDENT_STATUS_LABELS[value]}
+                  </option>
+                ))}
               </Select>
             </Field>
           </div>
@@ -490,22 +489,57 @@ export default function StudentsPage() {
                     </Td>
 
                     <Td>
-                      <Select
-                        value={student.status}
-                        onChange={(event) =>
-                          changeStatus(student, event.target.value)
-                        }
-                        className="w-[130px] py-1.5 text-xs"
-                        aria-label={`Status for ${student.fullName}`}
-                      >
-                        <option value="ACTIVE">Active</option>
-                        <option value="PENDING">Pending</option>
-                        <option value="SUSPENDED">Suspended</option>
-                      </Select>
+                      <div className="space-y-1">
+                        <Badge tone={statusTone(student.status)}>
+                          {statusLabel(student.status)}
+                        </Badge>
+
+                        {student.status !== "ACTIVE" ? (
+                          <p className="text-[11px] text-gray-400">
+                            {student.status === "SUSPENDED"
+                              ? "Keep history · not on the current roll"
+                              : "Archived history · not enrolled"}
+                          </p>
+                        ) : null}
+                      </div>
                     </Td>
 
                     <Td>
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        {availableStatusActions(student.status).map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => setStatusTarget({ student, action })}
+                            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                              action === "REACTIVATE"
+                                ? "border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                                : "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
+                            }`}
+                            title={`${actionLabel(action)} ${student.fullName}`}
+                          >
+                            {action === "SUSPEND" ? (
+                              <ShieldOff size={13} />
+                            ) : action === "DISMISS" ? (
+                              <XCircle size={13} />
+                            ) : (
+                              <RotateCcw size={13} />
+                            )}
+                            {actionLabel(action)}
+                          </button>
+                        ))}
+
+                        {student.status !== "ACTIVE" ? (
+                          <Link
+                            href={`/admin/students/${student.id}#history`}
+                            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                            title={`View ${student.fullName}'s history`}
+                          >
+                            <History size={13} />
+                            View History
+                          </Link>
+                        ) : null}
+
                         <Link
                           href={`/admin/students/${student.id}`}
                           className="rounded-lg p-2 text-gray-500 transition hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950/40"
@@ -641,18 +675,30 @@ export default function StudentsPage() {
             </Select>
           </Field>
 
-          <Field label="Status">
-            <Select
-              value={form.status}
-              onChange={(event) =>
-                setForm({ ...form, status: event.target.value })
-              }
+          {editing ? (
+            <Field
+              label="Status"
+              hint="Use the Suspend / Dismiss / Reactivate actions on the student row to change the status (a reason is recorded)."
             >
-              <option value="ACTIVE">Active</option>
-              <option value="PENDING">Pending</option>
-              <option value="SUSPENDED">Suspended</option>
-            </Select>
-          </Field>
+              <div className="flex items-center gap-2">
+                <Badge tone={statusTone(form.status)}>
+                  {statusLabel(form.status)}
+                </Badge>
+              </div>
+            </Field>
+          ) : (
+            <Field label="Status">
+              <Select
+                value={form.status}
+                onChange={(event) =>
+                  setForm({ ...form, status: event.target.value })
+                }
+              >
+                <option value="ACTIVE">Active</option>
+                <option value="PENDING">Pending</option>
+              </Select>
+            </Field>
+          )}
 
           <Field
             label="Parent / Guardian"
@@ -684,6 +730,26 @@ export default function StudentsPage() {
           </Field>
         </form>
       </Modal>
+
+      <StudentStatusDialog
+        student={
+          statusTarget
+            ? ({
+                id: statusTarget.student.id,
+                fullName: statusTarget.student.fullName,
+                matricule: statusTarget.student.matricule,
+                className: statusTarget.student.className,
+                status: statusTarget.student.status,
+              } satisfies StudentStatusTarget)
+            : null
+        }
+        action={statusTarget?.action ?? null}
+        onClose={() => setStatusTarget(null)}
+        onDone={(message) => {
+          setToast(message);
+          loadStudents();
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}

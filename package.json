@@ -6,7 +6,9 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:form2form3": "tsx prisma/seed-form2-form3.ts",
+    "verify:form2form3": "tsx prisma/verify-form2-form3.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -26,6 +28,7 @@
     "next-auth": "^5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "nodemailer": "^8.0.11",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
     "prisma": "^6.19.3",
     "qrcode": "^1.5.4",

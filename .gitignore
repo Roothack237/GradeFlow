@@ -36,6 +36,10 @@ yarn-error.log*
 # local sandbox-only embedded Postgres instance used for development/testing
 /.devdb
 
+# generated report cards (created by the admin report card generator)
+/public/report-cards/*
+!/public/report-cards/README.md
+
 # vercel
 .vercel
 
