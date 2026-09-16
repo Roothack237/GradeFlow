@@ -111,6 +111,19 @@ export async function GET() {
         // Matricule
         matricule: child.matricule,
 
+        // Enrolment status (ACTIVE / SUSPENDED / DISMISSED) — the parent
+        // always sees the status of their child, history included.
+        status: child.status,
+        statusLabel:
+          child.status === "ACTIVE"
+            ? "Active"
+            : child.status === "SUSPENDED"
+            ? "Suspended"
+            : child.status === "DISMISSED"
+            ? "Dismissed"
+            : "Pending",
+        enrolled: child.status === "ACTIVE",
+
         // Gender
         gender: child.gender,
 

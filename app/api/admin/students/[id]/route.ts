@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { logAudit } from "@/lib/audit";
 import { badRequest, notFound, serverError, str, optionalStr } from "@/lib/http";
+import {
+  STUDENT_STATUS_AUDIT_ACTION,
+  STUDENT_STATUSES,
+  statusLabel,
+} from "@/lib/student-status";
 import prisma from "@/lib/prisma";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -156,6 +161,44 @@ export async function GET(request: Request, { params }: RouteContext) {
 
     const publishedTermIds = new Set(publications.map((row) => row.termId));
 
+    /* ---- status history (ACTIVE / SUSPENDED / DISMISSED) ---- */
+
+    const statusLogs = await prisma.auditLog.findMany({
+      where: {
+        entityType: "Student",
+        entityId: id,
+        action: STUDENT_STATUS_AUDIT_ACTION,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      select: {
+        id: true,
+        description: true,
+        metadata: true,
+        actorName: true,
+        createdAt: true,
+      },
+    });
+
+    const statusHistory = statusLogs.map((entry) => {
+      const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+
+      return {
+        id: entry.id,
+        status: typeof metadata.status === "string" ? metadata.status : null,
+        previousStatus:
+          typeof metadata.previousStatus === "string"
+            ? metadata.previousStatus
+            : null,
+        reason: typeof metadata.reason === "string" ? metadata.reason : null,
+        changedBy:
+          (typeof metadata.changedBy === "string" ? metadata.changedBy : null) ??
+          entry.actorName,
+        date: entry.createdAt,
+        description: entry.description,
+      };
+    });
+
     return NextResponse.json({
       student: {
         id: student.id,
@@ -179,6 +222,8 @@ export async function GET(request: Request, { params }: RouteContext) {
       overallAverage,
       attendances: student.attendances,
       attendanceSummary,
+      statusLabel: statusLabel(student.status),
+      statusHistory,
       reportCards: student.reportCards.map((card) => ({
         ...card,
         published: publishedTermIds.has(card.termId),
@@ -278,12 +323,37 @@ async function updateStudent(
       changes.push(`moved to ${classroom.name}`);
     }
 
+    /* ---- status change (ACTIVE / SUSPENDED / DISMISSED) ---- */
+
+    let statusChange: {
+      previousStatus: string;
+      status: string;
+      reason: string | null;
+    } | null = null;
+
     if (status && status !== existing.status) {
-      if (!["ACTIVE", "SUSPENDED", "PENDING"].includes(status)) {
-        return badRequest("Invalid account status.");
+      if (!(STUDENT_STATUSES as readonly string[]).includes(status)) {
+        return badRequest(
+          "Invalid student status. Use ACTIVE, SUSPENDED, DISMISSED or PENDING."
+        );
+      }
+
+      const reason = optionalStr(body.reason);
+
+      if (status !== "ACTIVE" && !reason) {
+        return badRequest(
+          `A reason is required to change a student's status to ${status}.`
+        );
       }
 
       data.status = status;
+
+      statusChange = {
+        previousStatus: existing.status,
+        status,
+        reason,
+      };
+
       changes.push(`changed the status to ${status}`);
     }
 
@@ -327,9 +397,39 @@ async function updateStudent(
       description: `Updated student ${student.firstName} ${student.lastName} (${changes.join(", ")})`,
     });
 
+    /* The status change is recorded on its own so the reason, the date and
+       the administrator who made it stay attached to the student. */
+    if (statusChange) {
+      await logAudit({
+        actorId: guard.user.id,
+        actorName: guard.user.fullName,
+        action: STUDENT_STATUS_AUDIT_ACTION,
+        entityType: "Student",
+        entityId: student.id,
+        description: `Student ${student.firstName} ${student.lastName} (${
+          student.matricule
+        }): status ${statusChange.previousStatus} → ${statusChange.status}${
+          statusChange.reason ? ` — reason: ${statusChange.reason}` : ""
+        }`,
+        metadata: {
+          status: statusChange.status,
+          previousStatus: statusChange.previousStatus,
+          reason: statusChange.reason,
+          date: new Date().toISOString(),
+          changedBy: guard.user.fullName,
+          studentName: `${student.firstName} ${student.lastName}`.trim(),
+          matricule: student.matricule,
+          classroom: student.classroom?.name ?? null,
+        },
+      });
+    }
+
     return NextResponse.json({
-      message: "Student updated successfully.",
+      message: statusChange
+        ? `Student status changed to ${statusChange.status}.`
+        : "Student updated successfully.",
       student,
+      statusChange,
     });
   } catch (error) {
     return serverError("UPDATE STUDENT ERROR", error);

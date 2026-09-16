@@ -4,6 +4,16 @@ import { useEffect, useState } from "react";
 
 import Sidebar from "@/components/admin/SideBar";
 import Navbar from "@/components/admin/NavBar";
+import StudentStatusDialog, {
+  type StudentStatusTarget,
+} from "@/components/admin/StudentStatusDialog";
+import {
+  actionLabel,
+  availableStatusActions,
+  statusBadgeClasses,
+  statusLabel,
+  type StudentStatusAction,
+} from "@/lib/student-status";
 
 type Student = {
   id: string;
@@ -19,6 +29,8 @@ type Student = {
   classroomId?: string | null;
   className?: string | null;
   sectionName?: string | null;
+
+  status?: string | null;
 };
 
 type SectionItem = {
@@ -69,6 +81,11 @@ export default function StudentsPage() {
   // =========================================================
   // DELETE
   // =========================================================
+
+  const [statusTarget, setStatusTarget] = useState<{
+    student: Student;
+    action: StudentStatusAction;
+  } | null>(null);
 
   const [deletingId, setDeletingId] =
     useState<string | null>(null);
@@ -632,6 +649,10 @@ export default function StudentsPage() {
                       Class
                     </th>
 
+                    <th className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
+                      Status
+                    </th>
+
                     <th className="px-6 py-4 text-right font-semibold text-gray-700 dark:text-gray-300">
                       Actions
                     </th>
@@ -642,7 +663,7 @@ export default function StudentsPage() {
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={9}
                         className="px-6 py-12 text-center text-gray-500 dark:text-gray-400"
                       >
                         Loading students...
@@ -651,7 +672,7 @@ export default function StudentsPage() {
                   ) : students.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={9}
                         className="px-6 py-12 text-center text-gray-500 dark:text-gray-400"
                       >
                         No students found.
@@ -725,7 +746,36 @@ export default function StudentsPage() {
                           </td>
 
                           <td className="px-6 py-5">
-                            <div className="flex justify-end gap-2">
+                            <span
+                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(
+                                student.status
+                              )}`}
+                            >
+                              {statusLabel(student.status)}
+                            </span>
+                          </td>
+
+                          <td className="px-6 py-5">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {availableStatusActions(student.status).map(
+                                (action) => (
+                                  <button
+                                    key={action}
+                                    type="button"
+                                    onClick={() =>
+                                      setStatusTarget({ student, action })
+                                    }
+                                    className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                                      action === "REACTIVATE"
+                                        ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                                        : "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
+                                    }`}
+                                  >
+                                    {actionLabel(action)}
+                                  </button>
+                                )
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() =>
@@ -765,6 +815,27 @@ export default function StudentsPage() {
           </div>
         </main>
       </div>
+
+      <StudentStatusDialog
+        student={
+          statusTarget
+            ? ({
+                id: statusTarget.student.id,
+                fullName:
+                  statusTarget.student.fullName ||
+                  `${statusTarget.student.firstName ?? ""} ${
+                    statusTarget.student.lastName ?? ""
+                  }`.trim(),
+                matricule: statusTarget.student.matricule ?? null,
+                className: statusTarget.student.className ?? null,
+                status: statusTarget.student.status ?? "ACTIVE",
+              } satisfies StudentStatusTarget)
+            : null
+        }
+        action={statusTarget?.action ?? null}
+        onClose={() => setStatusTarget(null)}
+        onDone={() => fetchStudents()}
+      />
 
       {/* =====================================================
           ADD / EDIT STUDENT MODAL

@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   BarChart3,
   CalendarCheck,
+  CheckCircle2,
   Download,
+  Eye,
   FileText,
   GraduationCap,
   Printer,
@@ -208,13 +211,54 @@ type PerformanceReport = {
   bottomStudents: PerformanceReport["topStudents"];
 };
 
+type AcademicYear = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
+type ReportCardStudentRow = {
+  id: string;
+  name: string;
+  matricule: string;
+  status: string;
+  statusLabel: string;
+  enrolled: boolean;
+  parentName: string | null;
+  subjects: number;
+  marks: { expected: number; recorded: number; missing: number; complete: boolean };
+  average: number | null;
+  grade: string | null;
+  rank: number | null;
+  ranked: number;
+  decision: string | null;
+  attendanceRate: number | null;
+  reportCardId: string | null;
+  pdfUrl: string | null;
+};
+
+type ReportCardClass = {
+  term: { id: string; name: string; academicYear: string; academicYearId: string };
+  classroom: { id: string; name: string; sectionName: string | null };
+  publication: { status: string | null; published: boolean };
+  summary: {
+    students: number;
+    assessed: number;
+    withoutMarks: number;
+    incomplete: number;
+    average: number | null;
+    markCoverage: number | null;
+  };
+  students: ReportCardStudentRow[];
+};
+
 type ReportData =
   | StudentReport
   | ClassReport
   | AttendanceReport
   | PerformanceReport;
 
-type Tab = "PERFORMANCE" | "CLASS" | "STUDENT" | "ATTENDANCE";
+type Tab = "PERFORMANCE" | "CLASS" | "STUDENT" | "ATTENDANCE" | "REPORT_CARDS";
 
 /* =========================================================
    HELPERS
@@ -267,6 +311,16 @@ export default function ReportsPage() {
   const [toast, setToast] = useState("");
 
   const [generating, setGenerating] = useState(false);
+
+  /* report card generator (Academic Year → Class → Term → students) */
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [yearId, setYearId] = useState("");
+  const [reportCardClasses, setReportCardClasses] = useState<Option[]>([]);
+  const [includeInactive, setIncludeInactive] = useState(false);
+  const [reportCards, setReportCards] = useState<ReportCardClass | null>(null);
+  const [reportCardsLoading, setReportCardsLoading] = useState(false);
+  const [reportCardsError, setReportCardsError] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
 
   /* ---------------- lookups ---------------- */
 
@@ -328,6 +382,68 @@ export default function ReportsPage() {
     loadLookups();
   }, []);
 
+  /* ---------------- academic years ---------------- */
+
+  useEffect(() => {
+    async function loadYears() {
+      try {
+        const response = await fetch("/api/admin/academic-years", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const list: AcademicYear[] = payload.academicYears ?? [];
+
+        setAcademicYears(list);
+
+        const active =
+          list.find((year) => year.name === "2026/2027") ??
+          list.find((year) => year.isActive) ??
+          list[0];
+
+        if (active) setYearId((value) => value || active.id);
+      } catch {
+        /* non critical */
+      }
+    }
+
+    loadYears();
+  }, []);
+
+  /* ---------------- classes of the selected year ---------------- */
+
+  useEffect(() => {
+    async function loadClasses() {
+      if (!yearId) return;
+
+      try {
+        const response = await fetch(
+          `/api/admin/classes?academicYearId=${encodeURIComponent(yearId)}`,
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+
+        setReportCardClasses(
+          (payload.classes ?? []).map(
+            (classroom: { id: string; name: string }) => ({
+              id: classroom.id,
+              name: classroom.name,
+            })
+          )
+        );
+      } catch {
+        /* non critical */
+      }
+    }
+
+    loadClasses();
+  }, [yearId]);
+
   /* ---------------- load report ---------------- */
 
   const load = useCallback(async () => {
@@ -339,6 +455,11 @@ export default function ReportsPage() {
     }
 
     if (tab === "CLASS" && !classroomId) {
+      setData(null);
+      return;
+    }
+
+    if (tab === "REPORT_CARDS") {
       setData(null);
       return;
     }
@@ -378,9 +499,94 @@ export default function ReportsPage() {
     }
   }, [tab, termId, classroomId, studentId, from, to]);
 
+  const loadReportCards = useCallback(async () => {
+    if (!termId || !classroomId) {
+      setReportCards(null);
+      return;
+    }
+
+    try {
+      setReportCardsLoading(true);
+      setReportCardsError("");
+      setPreviewUrl("");
+
+      const params = new URLSearchParams({ termId, classroomId });
+
+      if (includeInactive) params.set("includeInactive", "true");
+
+      const response = await fetch(
+        `/api/admin/reports/report-cards?${params.toString()}`,
+        { cache: "no-store" }
+      );
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setReportCardsError(
+          payload.error ?? "Unable to load the students of this class."
+        );
+        setReportCards(null);
+        return;
+      }
+
+      setReportCards(payload as ReportCardClass);
+    } catch {
+      setReportCardsError("Unable to load the students of this class.");
+      setReportCards(null);
+    } finally {
+      setReportCardsLoading(false);
+    }
+  }, [termId, classroomId, includeInactive]);
+
   useEffect(() => {
     load();
-  }, [load]);
+
+    /* the report card tab is loaded from the same effect, so the page keeps
+       a single data-loading effect like the rest of the admin screens */
+    if (tab === "REPORT_CARDS") loadReportCards();
+  }, [load, tab, loadReportCards]);
+
+  /* ---------------- report cards of one class ---------------- */
+
+  const pdfBase = `/api/admin/reports/report-cards/pdf?termId=${encodeURIComponent(
+    termId
+  )}&classroomId=${encodeURIComponent(classroomId)}${
+    includeInactive ? "&includeInactive=true" : ""
+  }`;
+
+  async function generateClassReportCards() {
+    if (!termId || !classroomId) {
+      setReportCardsError("Select an academic year, a class and a term first.");
+      return;
+    }
+
+    setGenerating(true);
+    setReportCardsError("");
+
+    try {
+      const response = await fetch("/api/admin/reports/report-cards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ termId, classroomId, includeInactive }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setReportCardsError(
+          payload.error ?? "Unable to generate the report cards."
+        );
+        return;
+      }
+
+      setToast(payload.message ?? "Report cards generated.");
+      await loadReportCards();
+    } catch {
+      setReportCardsError("Unable to generate the report cards.");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   /* ---------------- report cards ---------------- */
 
@@ -547,6 +753,11 @@ export default function ReportsPage() {
     { id: "CLASS", label: "Class report", icon: <School size={16} /> },
     { id: "STUDENT", label: "Student report", icon: <GraduationCap size={16} /> },
     { id: "ATTENDANCE", label: "Attendance", icon: <CalendarCheck size={16} /> },
+    {
+      id: "REPORT_CARDS",
+      label: "Report cards",
+      icon: <Sparkles size={16} />,
+    },
   ];
 
   return (
@@ -577,10 +788,12 @@ export default function ReportsPage() {
           Print
         </Button>
 
-        <Button onClick={generateReportCards} loading={generating}>
-          <Sparkles size={16} />
-          Generate report cards
-        </Button>
+        {tab === "REPORT_CARDS" ? null : (
+          <Button onClick={generateReportCards} loading={generating}>
+            <Sparkles size={16} />
+            Generate report cards
+          </Button>
+        )}
       </PageHeader>
 
       {/* ---------------- filters ---------------- */}
@@ -610,7 +823,10 @@ export default function ReportsPage() {
               value={termId}
               onChange={(event) => setTermId(event.target.value)}
             >
-              {terms.map((term) => (
+              {(tab === "REPORT_CARDS" && yearId
+                ? terms.filter((term) => term.academicYear?.id === yearId)
+                : terms
+              ).map((term) => (
                 <option key={term.id} value={term.id}>
                   {term.academicYear?.name ? `${term.academicYear.name} · ` : ""}
                   {term.name}
@@ -618,6 +834,43 @@ export default function ReportsPage() {
               ))}
             </Select>
           </Field>
+
+          {tab === "REPORT_CARDS" ? (
+            <>
+              <Field label="Academic year">
+                <Select
+                  value={yearId}
+                  onChange={(event) => {
+                    setYearId(event.target.value);
+                    setClassroomId("");
+                    setReportCards(null);
+                  }}
+                >
+                  <option value="">Select an academic year</option>
+                  {academicYears.map((year) => (
+                    <option key={year.id} value={year.id}>
+                      {year.name}
+                      {year.isActive ? " (active)" : ""}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
+              <Field label="Class">
+                <Select
+                  value={classroomId}
+                  onChange={(event) => setClassroomId(event.target.value)}
+                >
+                  <option value="">Select a class</option>
+                  {reportCardClasses.map((classroom) => (
+                    <option key={classroom.id} value={classroom.id}>
+                      {classroom.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
+          ) : null}
 
           {tab === "CLASS" || tab === "ATTENDANCE" ? (
             <Field label={tab === "ATTENDANCE" ? "Class (optional)" : "Class"}>
@@ -691,7 +944,285 @@ export default function ReportsPage() {
         </div>
       ) : null}
 
-      {loading ? (
+      {tab === "REPORT_CARDS" ? (
+        <div className="space-y-6">
+          {reportCardsError ? (
+            <ErrorState
+              message={reportCardsError}
+              onRetry={loadReportCards}
+            />
+          ) : null}
+
+          {!yearId || !classroomId || !termId ? (
+            <Card>
+              <EmptyState
+                icon={<FileText size={20} />}
+                title="Choose the class to report on"
+                message="Academic year → class → term, then the students of that class appear below with their marks, averages and ranks. Report cards are generated per student from the marks stored in the database."
+              />
+            </Card>
+          ) : reportCardsLoading ? (
+            <Card title="Loading students">
+              <LoadingState label="Reading the marks of this class from the database…" />
+            </Card>
+          ) : !reportCards ? (
+            <Card>
+              <EmptyState
+                icon={<FileText size={20} />}
+                title="No class data"
+                message="Select another class or term."
+              />
+            </Card>
+          ) : (
+            <>
+              <Card bodyClassName="p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="text-sm">
+                      <p className="font-semibold text-gray-900 dark:text-white">
+                        {reportCards.classroom.name} · {reportCards.term.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Academic year {reportCards.term.academicYear} ·{" "}
+                        {reportCards.summary.students} student(s) in this view
+                      </p>
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={includeInactive}
+                        onChange={(event) =>
+                          setIncludeInactive(event.target.checked)
+                        }
+                        className="h-4 w-4 rounded border-gray-300 text-purple-700"
+                      />
+                      Include suspended &amp; dismissed students (history)
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setPreviewUrl(`${pdfBase}&inline=1`)
+                      }
+                      disabled={!reportCards.summary.assessed}
+                    >
+                      <Eye size={16} />
+                      Preview class set
+                    </Button>
+
+                    <a
+                      href={pdfBase}
+                      className={`inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 ${
+                        reportCards.summary.assessed
+                          ? ""
+                          : "pointer-events-none opacity-50"
+                      }`}
+                    >
+                      <Download size={16} />
+                      Download class PDF
+                    </a>
+
+                    <Button
+                      onClick={generateClassReportCards}
+                      loading={generating}
+                      disabled={!reportCards.summary.assessed}
+                    >
+                      <Sparkles size={16} />
+                      Generate report cards
+                    </Button>
+                  </div>
+                </div>
+
+                {!reportCards.publication.published ? (
+                  <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                    The results of {reportCards.classroom.name} for{" "}
+                    {reportCards.term.name} are not published yet. Report cards
+                    can be generated and printed, but parents only see them once
+                    the results are published in Results → Publications.
+                  </p>
+                ) : (
+                  <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+                    Results are published: parents can open these report cards.
+                  </p>
+                )}
+              </Card>
+
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <StatCard
+                  label="Students in the class"
+                  value={reportCards.summary.students}
+                  icon={<Users size={20} />}
+                  tone="purple"
+                  hint={`${reportCards.summary.assessed} with marks`}
+                />
+                <StatCard
+                  label="Marks coverage"
+                  value={
+                    reportCards.summary.markCoverage === null
+                      ? "—"
+                      : `${reportCards.summary.markCoverage}%`
+                  }
+                  icon={<BarChart3 size={20} />}
+                  tone="blue"
+                  hint={`${reportCards.summary.incomplete} student(s) with gaps`}
+                />
+                <StatCard
+                  label="Class average"
+                  value={reportCards.summary.average ?? "—"}
+                  icon={<TrendingUp size={20} />}
+                  tone="emerald"
+                />
+                <StatCard
+                  label="Without marks"
+                  value={reportCards.summary.withoutMarks}
+                  icon={<AlertTriangle size={20} />}
+                  tone="amber"
+                  hint="No report card is generated for them"
+                />
+              </div>
+
+              <Card
+                title={`Students of ${reportCards.classroom.name}`}
+                description="One report card per student — generated from their own marks in PostgreSQL."
+                bodyClassName=""
+              >
+                <TableWrap>
+                  <thead>
+                    <tr>
+                      <Th>#</Th>
+                      <Th>Student</Th>
+                      <Th>Status</Th>
+                      <Th className="text-right">Marks</Th>
+                      <Th className="text-right">Average</Th>
+                      <Th className="text-right">Rank</Th>
+                      <Th>Decision</Th>
+                      <Th className="text-right">Report card</Th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {reportCards.students.map((student, index) => (
+                      <tr key={student.id}>
+                        <Td className="text-xs text-gray-400">{index + 1}</Td>
+                        <Td>
+                          <p className="font-semibold text-gray-900 dark:text-white">
+                            {student.name}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {student.matricule}
+                            {student.parentName
+                              ? ` · ${student.parentName}`
+                              : ""}
+                          </p>
+                        </Td>
+                        <Td>
+                          <Badge
+                            tone={
+                              student.status === "ACTIVE"
+                                ? "green"
+                                : student.status === "SUSPENDED"
+                                  ? "amber"
+                                  : student.status === "DISMISSED"
+                                    ? "red"
+                                    : "gray"
+                            }
+                          >
+                            {student.statusLabel}
+                          </Badge>
+                        </Td>
+                        <Td className="text-right text-xs">
+                          {student.marks.recorded}/{student.marks.expected}
+                          {student.marks.complete ? (
+                            <CheckCircle2
+                              size={13}
+                              className="ml-1 inline text-emerald-600"
+                            />
+                          ) : (
+                            <span className="ml-1 text-amber-600">·</span>
+                          )}
+                        </Td>
+                        <Td className="text-right font-semibold">
+                          {student.average ?? "—"}
+                        </Td>
+                        <Td className="text-right">
+                          {student.rank ? `${student.rank}/${student.ranked}` : "—"}
+                        </Td>
+                        <Td>{student.decision ?? "—"}</Td>
+                        <Td>
+                          <div className="flex items-center justify-end gap-2">
+                            {student.marks.recorded === 0 ? (
+                              <span className="text-xs text-gray-400">
+                                No marks
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewUrl(
+                                      `${pdfBase}&studentId=${student.id}&inline=1`
+                                    )
+                                  }
+                                  className="rounded-lg p-2 text-gray-500 transition hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950/40"
+                                  title={`Preview ${student.name}'s report card`}
+                                >
+                                  <Eye size={16} />
+                                </button>
+
+                                <a
+                                  href={`${pdfBase}&studentId=${student.id}`}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                                  title={`Download ${student.name}'s report card`}
+                                >
+                                  <Download size={14} />
+                                  Download
+                                </a>
+                              </>
+                            )}
+                          </div>
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </TableWrap>
+
+                <div className="border-t border-gray-200 px-5 py-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  Already stored: {reportCards.students.filter((student) => student.reportCardId).length}{" "}
+                  of {reportCards.students.length} report card(s) for{" "}
+                  {reportCards.term.name}.
+                </div>
+              </Card>
+
+              {previewUrl ? (
+                <Card
+                  title="Report card preview"
+                  description="This is the exact document that is downloaded and printed."
+                  bodyClassName="p-4"
+                >
+                  <iframe
+                    key={previewUrl}
+                    src={previewUrl}
+                    title="Report card preview"
+                    className="h-[760px] w-full rounded-xl border border-gray-200 dark:border-gray-800"
+                  />
+
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setPreviewUrl("")}
+                    >
+                      Close preview
+                    </Button>
+                  </div>
+                </Card>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : loading ? (
         <Card title="Building the report">
           <LoadingState label="Building the report from the database…" />
         </Card>

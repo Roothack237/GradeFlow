@@ -259,6 +259,19 @@ export default function ChildResultsPage({
                             Class: {child.classroom.name}
                           </p>
                         )}
+
+                        {/* Enrolment status: suspended / dismissed students
+                            keep their history, and the family can see it. */}
+                        <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">
+                          Status:{" "}
+                          {child.status === "ACTIVE"
+                            ? "Active"
+                            : child.status === "SUSPENDED"
+                              ? "Suspended"
+                              : child.status === "DISMISSED"
+                                ? "Dismissed"
+                                : "Pending"}
+                        </p>
                       </div>
                     </div>
 
@@ -268,6 +281,20 @@ export default function ChildResultsPage({
                   </div>
                 </div>
               </section>
+
+              {child.status !== "ACTIVE" && (
+                <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                  <p className="font-semibold">
+                    {child.status === "SUSPENDED"
+                      ? "This student is currently suspended."
+                      : "This student has been dismissed."}
+                  </p>
+                  <p className="mt-1">
+                    The academic history below — marks, attendance and report
+                    cards — is kept and remains available.
+                  </p>
+                </div>
+              )}
 
               {/* Overview */}
               <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

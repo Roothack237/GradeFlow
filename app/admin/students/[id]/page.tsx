@@ -15,9 +15,23 @@ import {
   RefreshCw,
   Award,
   School,
+  ShieldOff,
+  XCircle,
+  RotateCcw,
+  History,
 } from "lucide-react";
 
 import AdminShell from "@/components/admin/AdminShell";
+import StudentStatusDialog, {
+  type StudentStatusTarget,
+} from "@/components/admin/StudentStatusDialog";
+import {
+  actionLabel,
+  availableStatusActions,
+  statusLabel,
+  statusTone,
+  type StudentStatusAction,
+} from "@/lib/student-status";
 import {
   Badge,
   Button,
@@ -88,6 +102,16 @@ type StudentDetail = {
     sequence: { name: string };
   }[];
   attendanceSummary: Record<string, number>;
+  statusLabel?: string;
+  statusHistory?: {
+    id: string;
+    status: string | null;
+    previousStatus: string | null;
+    reason: string | null;
+    changedBy: string | null;
+    date: string;
+    description: string;
+  }[];
   reportCards: {
     id: string;
     average: number;
@@ -128,6 +152,9 @@ export default function StudentDetailPage() {
   const [toast, setToast] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [statusAction, setStatusAction] = useState<StudentStatusAction | null>(
+    null
+  );
 
   const load = useCallback(async () => {
     try {
@@ -238,22 +265,31 @@ export default function StudentDetailPage() {
                       <Badge tone="blue">{data.student.sectionName}</Badge>
                     ) : null}
 
-                    <Badge
-                      tone={
-                        data.student.status === "ACTIVE"
-                          ? "green"
-                          : data.student.status === "SUSPENDED"
-                            ? "red"
-                            : "amber"
-                      }
-                    >
-                      {data.student.status}
+                    <Badge tone={statusTone(data.student.status)}>
+                      Status: {data.statusLabel ?? statusLabel(data.student.status)}
                     </Badge>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {availableStatusActions(data.student.status).map((action) => (
+                  <Button
+                    key={action}
+                    variant={action === "REACTIVATE" ? "primary" : "danger"}
+                    onClick={() => setStatusAction(action)}
+                  >
+                    {action === "SUSPEND" ? (
+                      <ShieldOff size={16} />
+                    ) : action === "DISMISS" ? (
+                      <XCircle size={16} />
+                    ) : (
+                      <RotateCcw size={16} />
+                    )}
+                    {actionLabel(action)}
+                  </Button>
+                ))}
+
                 <Button variant="secondary" onClick={load}>
                   <RefreshCw size={16} />
                   Refresh
@@ -506,6 +542,73 @@ export default function StudentDetailPage() {
             )}
           </Card>
 
+          {/* STATUS HISTORY */}
+
+          <div id="history" className="scroll-mt-24">
+            <Card
+              title="Academic status & history"
+              description="Every suspension, dismissal and reactivation recorded for this student."
+              bodyClassName=""
+            >
+              <div className="border-b border-gray-200 p-5 dark:border-gray-800">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Badge tone={statusTone(data.student.status)}>
+                    Status: {data.statusLabel ?? statusLabel(data.student.status)}
+                  </Badge>
+
+                  <p className="text-sm text-gray-600 dark:text-gray-300">
+                    {data.student.status === "ACTIVE"
+                      ? "Enrolled — normal academic operations continue."
+                      : data.student.status === "SUSPENDED"
+                        ? "Suspended — marks, attendance, report cards and history are preserved, but the student is off the current class roll."
+                        : "Dismissed — the record is archived and preserved; the student is no longer part of the current roll."}
+                  </p>
+                </div>
+              </div>
+
+              {!data.statusHistory || data.statusHistory.length === 0 ? (
+                <div className="p-5">
+                  <EmptyState
+                    icon={<History size={20} />}
+                    title="No status change recorded"
+                    message="Suspensions, dismissals and reactivations appear here with their reason, date and author."
+                  />
+                </div>
+              ) : (
+                <TableWrap>
+                  <thead>
+                    <tr>
+                      <Th>Date</Th>
+                      <Th>Change</Th>
+                      <Th>Reason</Th>
+                      <Th>Changed by</Th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {data.statusHistory.map((entry) => (
+                      <tr key={entry.id}>
+                        <Td className="whitespace-nowrap">
+                          {formatDate(entry.date)}
+                        </Td>
+                        <Td>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {entry.previousStatus ?? "—"} →{" "}
+                          </span>
+                          <Badge tone={statusTone(entry.status)}>
+                            {statusLabel(entry.status)}
+                          </Badge>
+                        </Td>
+                        <Td>{entry.reason ?? "—"}</Td>
+                        <Td>{entry.changedBy ?? "—"}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </TableWrap>
+              )}
+            </Card>
+          </div>
+
           {/* REPORT CARDS */}
 
           <Card
@@ -557,6 +660,26 @@ export default function StudentDetailPage() {
           </Card>
         </div>
       ) : null}
+
+      <StudentStatusDialog
+        student={
+          data && statusAction
+            ? ({
+                id: data.student.id,
+                fullName: data.student.fullName,
+                matricule: data.student.matricule,
+                className: data.student.className,
+                status: data.student.status,
+              } satisfies StudentStatusTarget)
+            : null
+        }
+        action={statusAction}
+        onClose={() => setStatusAction(null)}
+        onDone={(message) => {
+          setToast(message);
+          load();
+        }}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

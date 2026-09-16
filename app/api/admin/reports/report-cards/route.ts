@@ -1,210 +1,320 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
 import { NextResponse } from "next/server";
+
 import { requireAdmin } from "@/lib/admin-auth";
 import { logAudit } from "@/lib/audit";
 import { badRequest, serverError, str } from "@/lib/http";
 import { createManyNotifications } from "@/lib/notifications";
 import prisma from "@/lib/prisma";
-import { PASS_MARK } from "@/lib/grading";
+import {
+  buildTermReportCards,
+  type ReportCardData,
+} from "@/lib/report-card";
+import { renderReportCardPdf } from "@/lib/report-card-pdf";
+import { enrolledOnly, statusLabel } from "@/lib/student-status";
 
 /**
- * POST /api/admin/reports/report-cards
- * Computes and stores the term report cards from the recorded marks:
- * weighted average, class rank and promotion decision. Parents of the class
- * are then notified once that the report cards are available.
+ * Report cards of one class for one term.
  *
- * Body: { termId, classroomId? }  — omit the class to process the whole term.
+ *   GET  /api/admin/reports/report-cards?termId=&classroomId=[&includeInactive=]
+ *        → the students of the class with the marks recorded for the term,
+ *          their computed average, rank and stored report card. Used by the
+ *          Reports page to list the students before generating.
+ *
+ *   POST /api/admin/reports/report-cards  { termId, classroomId, includeInactive? }
+ *        → computes the report cards from the marks stored in PostgreSQL,
+ *          stores them (ReportCard), renders one A4 portrait PDF per student
+ *          into public/report-cards/... and records the PDF on the card.
+ *
+ * Students without a single mark for the term are skipped: an empty report
+ * card is never produced.
  */
+
+type RouteBody = {
+  termId?: unknown;
+  classroomId?: unknown;
+  includeInactive?: unknown;
+};
+
+function bool(value: unknown) {
+  return value === true || value === "true";
+}
+
+/* =========================================================
+   GET — class report card list
+========================================================= */
+
+export async function GET(request: Request) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  try {
+    const { searchParams } = new URL(request.url);
+
+    const termId = str(searchParams.get("termId"));
+    const classroomId = str(searchParams.get("classroomId"));
+    const includeInactive = bool(searchParams.get("includeInactive"));
+
+    if (!termId || !classroomId) {
+      return badRequest("A term and a class are required.");
+    }
+
+    const { cards, term } = await buildTermReportCards({
+      termId,
+      classroomId,
+      includeInactive,
+    });
+
+    if (!term) return badRequest("Term not found.");
+
+    const classroom = await prisma.classroom.findUnique({
+      where: { id: classroomId },
+      select: {
+        id: true,
+        name: true,
+        section: { select: { name: true } },
+        academicYear: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!classroom) return badRequest("Class not found.");
+
+    const publication = await prisma.resultPublication.findUnique({
+      where: { termId_classroomId: { termId, classroomId } },
+      select: { status: true, publishedAt: true },
+    });
+
+    const withMarks = cards.filter((card) => card.marks.recorded > 0);
+
+    const averages = withMarks
+      .map((card) => card.totals.average)
+      .filter((value): value is number => value !== null);
+
+    return NextResponse.json({
+      term: {
+        id: term.id,
+        name: term.name,
+        academicYear: classroom.academicYear.name,
+        academicYearId: classroom.academicYear.id,
+      },
+      classroom: {
+        id: classroom.id,
+        name: classroom.name,
+        sectionName: classroom.section?.name ?? null,
+      },
+      includeInactive,
+      publication: {
+        status: publication?.status ?? null,
+        published: publication?.status === "PUBLISHED",
+      },
+      summary: {
+        students: cards.length,
+        assessed: withMarks.length,
+        withoutMarks: cards.length - withMarks.length,
+        incomplete: withMarks.filter((card) => !card.marks.complete).length,
+        average: averages.length
+          ? Math.round(
+              (averages.reduce((sum, value) => sum + value, 0) / averages.length) *
+                100
+            ) / 100
+          : null,
+        markCoverage: withMarks.length
+          ? Math.round(
+              (withMarks.reduce(
+                (sum, card) => sum + card.marks.recorded,
+                0
+              ) /
+                Math.max(
+                  1,
+                  withMarks.reduce((sum, card) => sum + card.marks.expected, 0)
+                )) *
+                1000
+            ) / 10
+          : null,
+      },
+      students: cards.map((card) => ({
+        id: card.student.id,
+        name: card.student.fullName,
+        matricule: card.student.matricule,
+        status: card.student.status,
+        statusLabel: statusLabel(card.student.status),
+        enrolled: card.student.enrolled,
+        parentName: card.student.parentName,
+        subjects: card.subjects.length,
+        marks: card.marks,
+        average: card.totals.average,
+        grade: card.totals.grade,
+        rank: card.class.position,
+        ranked: card.class.ranked,
+        decision: card.decision,
+        attendanceRate: card.attendance.rate,
+        reportCardId: card.reportCardId,
+        pdfUrl: card.pdfUrl,
+      })),
+    });
+  } catch (error) {
+    return serverError("ADMIN REPORT CARD LIST ERROR", error);
+  }
+}
+
+/* =========================================================
+   POST — generate the report cards of the class
+========================================================= */
+
 export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = (await request.json().catch(() => ({}))) as RouteBody;
 
     const termId = str(body.termId);
     const classroomId = str(body.classroomId);
+    const includeInactive = bool(body.includeInactive);
 
     if (!termId) return badRequest("A term is required.");
+    if (!classroomId) return badRequest("A class is required.");
 
     const term = await prisma.term.findUnique({
       where: { id: termId },
-      select: { id: true, name: true, academicYear: { select: { name: true } } },
+      select: {
+        id: true,
+        name: true,
+        academicYear: { select: { id: true, name: true } },
+      },
     });
 
     if (!term) return badRequest("Term not found.");
 
-    const classrooms = await prisma.classroom.findMany({
-      where: classroomId ? { id: classroomId } : {},
+    const classroom = await prisma.classroom.findUnique({
+      where: { id: classroomId },
       select: {
         id: true,
         name: true,
         students: {
-          select: { id: true, firstName: true, lastName: true },
+          where: includeInactive ? {} : enrolledOnly(),
+          select: { id: true, parent: { select: { userId: true } } },
         },
       },
     });
 
-    if (!classrooms.length) {
-      return badRequest("No class found for this term.");
-    }
+    if (!classroom) return badRequest("Class not found.");
 
-    /* ---- marks of the term, grouped per student ---- */
-
-    const marks = await prisma.mark.findMany({
-      where: {
-        sequence: { termId },
-        student: { classroomId: { in: classrooms.map((room) => room.id) } },
-      },
-      select: {
-        studentId: true,
-        average: true,
-        subject: { select: { id: true, coefficient: true } },
-      },
+    const { cards } = await buildTermReportCards({
+      termId,
+      classroomId,
+      includeInactive,
     });
 
-    const perStudent = new Map<
-      string,
-      Map<string, { total: number; count: number; coefficient: number }>
-    >();
+    /* students without a single mark are skipped: no empty report card */
 
-    for (const mark of marks) {
-      const subjects =
-        perStudent.get(mark.studentId) ??
-        new Map<string, { total: number; count: number; coefficient: number }>();
+    const withMarks = cards.filter((card) => card.marks.recorded > 0);
+    const skipped = cards.length - withMarks.length;
 
-      const entry = subjects.get(mark.subject.id) ?? {
-        total: 0,
-        count: 0,
-        coefficient: mark.subject.coefficient,
-      };
+    /* ---- store the PDF of every student ---- */
 
-      entry.total += mark.average;
-      entry.count += 1;
+    const directory = path.join(
+      process.cwd(),
+      "public",
+      "report-cards",
+      term.academicYear.name.replace(/\//g, "-"),
+      classroom.name.replace(/[^A-Za-z0-9]+/g, "-")
+    );
 
-      subjects.set(mark.subject.id, entry);
-      perStudent.set(mark.studentId, subjects);
-    }
-
-    /* ---- weighted average per student ---- */
-
-    const computed = new Map<string, number>();
-
-    for (const [studentId, subjects] of perStudent) {
-      let weighted = 0;
-      let coefficients = 0;
-
-      for (const entry of subjects.values()) {
-        const subjectAverage = entry.total / entry.count;
-
-        weighted += subjectAverage * entry.coefficient;
-        coefficients += entry.coefficient;
-      }
-
-      if (coefficients > 0) {
-        computed.set(studentId, Math.round((weighted / coefficients) * 100) / 100);
-      }
-    }
-
-    /* ---- ranking inside each class + storage ---- */
+    await mkdir(directory, { recursive: true });
 
     const now = new Date();
-    let generated = 0;
-    let skipped = 0;
 
-    const notifiedClasses: { id: string; name: string; count: number }[] = [];
+    const generated = await Promise.all(
+      withMarks.map(async (card) => {
+        const pdf = await renderReportCardPdf(card);
 
-    for (const classroom of classrooms) {
-      const ranked = classroom.students
-        .map((student) => ({
-          id: student.id,
-          name: `${student.firstName} ${student.lastName}`.trim(),
-          average: computed.get(student.id) ?? null,
-        }))
-        .filter((student) => student.average !== null)
-        .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
+        const fileName = `${card.student.matricule.replace(
+          /[^A-Za-z0-9-]+/g,
+          "-"
+        )}-${term.name.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}.pdf`;
 
-      skipped += classroom.students.length - ranked.length;
+        const absolutePath = path.join(directory, fileName);
 
-      let previousAverage: number | null = null;
-      let previousRank = 0;
+        await writeFile(absolutePath, pdf);
 
-      for (let index = 0; index < ranked.length; index += 1) {
-        const student = ranked[index];
-        const average = student.average as number;
+        const pdfUrl = path
+          .join(
+            "/report-cards",
+            term.academicYear.name.replace(/\//g, "-"),
+            classroom.name.replace(/[^A-Za-z0-9]+/g, "-"),
+            fileName
+          )
+          .split(path.sep)
+          .join("/");
 
-        /* students with the same average share the same rank */
-        const rank =
-          previousAverage !== null && average === previousAverage
-            ? previousRank
-            : index + 1;
-
-        previousAverage = average;
-        previousRank = rank;
-
-        await prisma.reportCard.upsert({
+        const stored = await prisma.reportCard.upsert({
           where: {
-            studentId_termId: { studentId: student.id, termId },
+            studentId_termId: { studentId: card.student.id, termId },
           },
           update: {
-            average,
-            rank,
-            decision: average >= PASS_MARK ? "PROMOTED" : "REPEAT",
-            principalRemark: `Term results generated from recorded marks on ${now.toLocaleDateString(
-              "en-GB"
-            )}.`,
+            average: card.totals.average ?? 0,
+            rank: card.class.position,
+            decision: card.decision,
+            principalRemark: principalRemark(card),
+            pdfUrl,
           },
           create: {
-            studentId: student.id,
+            studentId: card.student.id,
             termId,
-            average,
-            rank,
-            decision: average >= PASS_MARK ? "PROMOTED" : "REPEAT",
-            principalRemark: `Term results generated from recorded marks on ${now.toLocaleDateString(
-              "en-GB"
-            )}.`,
+            average: card.totals.average ?? 0,
+            rank: card.class.position,
+            decision: card.decision,
+            principalRemark: principalRemark(card),
+            pdfUrl,
           },
+          select: { id: true },
         });
 
-        generated += 1;
-      }
+        return {
+          id: card.student.id,
+          name: card.student.fullName,
+          matricule: card.student.matricule,
+          status: card.student.status,
+          statusLabel: statusLabel(card.student.status),
+          average: card.totals.average,
+          grade: card.totals.grade,
+          rank: card.class.position,
+          decision: card.decision,
+          marks: card.marks,
+          reportCardId: stored.id,
+          pdfUrl,
+        };
+      })
+    );
 
-      if (ranked.length) {
-        notifiedClasses.push({
-          id: classroom.id,
-          name: classroom.name,
-          count: ranked.length,
-        });
-      }
-    }
+    /* ---- notify the parents of the actively enrolled students ---- */
 
-    /* ---- notify the parents once per class ---- */
+    const recipientIds = Array.from(
+      new Set(
+        classroom.students
+          .map((student) => student.parent?.userId)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
 
     let notified = 0;
 
-    for (const classroom of notifiedClasses) {
-      const parents = await prisma.student.findMany({
-        where: { classroomId: classroom.id, parentId: { not: null } },
-        select: { parent: { select: { userId: true } } },
-      });
-
-      const recipientIds = parents
-        .map((student) => student.parent?.userId)
-        .filter((id): id is string => Boolean(id));
-
-      if (!recipientIds.length) continue;
-
+    if (recipientIds.length && generated.length) {
       await createManyNotifications(recipientIds, {
         title: "Report cards available",
         message: `The ${term.name} report cards for ${classroom.name} are now available.`,
         type: "REPORT_AVAILABLE",
         senderId: guard.user.id,
         audience: "CLASS",
-        actionUrl: "/parent/children",
-        relatedType: "Classroom",
-        relatedId: classroom.id,
+        actionUrl: "/parent/report-cards",
+        relatedType: "ReportCard",
+        relatedId: termId,
       });
 
-      notified += recipientIds.length;
+      notified = recipientIds.length;
     }
 
     await logAudit({
@@ -213,25 +323,44 @@ export async function POST(request: Request) {
       action: "REPORT_GENERATED",
       entityType: "ReportCard",
       entityId: termId,
-      description: `Generated ${generated} report card(s) for ${term.name} (${term.academicYear.name})`,
+      description: `Generated ${generated.length} report card(s) for ${classroom.name} — ${term.name} (${term.academicYear.name})`,
       metadata: {
         termId,
-        classroomId: classroomId || null,
-        generated,
+        classroomId,
+        academicYear: term.academicYear.name,
+        includeInactive,
+        generated: generated.length,
         skipped,
         notified,
+        students: generated.map((student) => student.matricule),
       },
     });
 
     return NextResponse.json({
-      message: `${generated} report card(s) generated${
+      message: `${generated.length} report card(s) generated for ${classroom.name}${
         skipped ? `, ${skipped} student(s) had no mark yet` : ""
       }.${notified ? ` ${notified} parent notification(s) sent.` : ""}`,
-      generated,
+      classroom: { id: classroom.id, name: classroom.name },
+      term: {
+        id: term.id,
+        name: term.name,
+        academicYear: term.academicYear.name,
+      },
+      generated: generated.length,
       skipped,
       notified,
+      students: generated,
     });
   } catch (error) {
     return serverError("ADMIN REPORT CARD GENERATION ERROR", error);
   }
+}
+
+/** Principal's remark stored on the report card. */
+function principalRemark(card: ReportCardData) {
+  const decision = card.decision === "REPEAT" ? "repeat" : "continue";
+
+  return `Term average ${card.totals.average?.toFixed(2) ?? "—"}/20 — ${decision}. Generated from the marks recorded up to ${new Date().toLocaleDateString(
+    "en-GB"
+  )}.`;
 }

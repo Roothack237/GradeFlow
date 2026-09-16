@@ -34,3 +34,21 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Report cards & student status
+
+* `npm run seed:form2form3` — fills the Form 2 / Form 3 dataset of the
+  **2026/2027** academic year (students, parents, subject assignments, marks,
+  attendance, teacher availability). Idempotent.
+* `npm run verify:form2form3` — verifies that every Form 2 / Form 3 student has
+  a mark for every assigned subject and sequence, and reports the totals.
+
+Optional environment variables for the report-card letterhead (all default to
+GradeFlow values when unset):
+
+```
+SCHOOL_NAME, SCHOOL_MOTTO, SCHOOL_ADDRESS, SCHOOL_PHONE, SCHOOL_EMAIL,
+SCHOOL_MINISTRY, SCHOOL_PRINCIPAL_NAME, SCHOOL_ACADEMIC_MASTER_NAME
+```
+
+See `docs/STUDENT_STATUS_AND_REPORT_CARDS.md` for the full description.
