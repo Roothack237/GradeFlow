@@ -1,348 +1,298 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  BookOpen,
   Loader2,
-  Plus,
-  Search,
+  ChevronRight,
   Users,
-  Pencil,
-  Trash2,
+  Plus,
 } from "lucide-react";
 
-import Sidebar from "@/components/admin/SideBar";
-import NavBar from "@/components/admin/NavBar";
+import Sidebar from "@/components/admin/Sidebar";
+import Navbar from "@/components/admin/Navbar";
 
-type Classroom = {
+interface Section {
   id: string;
   name: string;
-  section: {
-    id: string;
-    name: string;
-  };
-  academicYear?: {
-    id: string;
-    name: string;
-    isActive: boolean;
-  };
+}
+
+interface AcademicYear {
+  id: string;
+  name: string;
+}
+
+interface Classroom {
+  id: string;
+  name: string;
+  section: Section | null;
+  academicYear: AcademicYear;
   _count: {
     students: number;
   };
-};
+}
 
 export default function ManageClassesPage() {
   const [classes, setClasses] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [academicYear, setAcademicYear] = useState("2026/2027");
 
   useEffect(() => {
     loadClasses();
-  }, []);
-
-  async function handleDelete(classroom: Classroom) {
-    const confirmed = window.confirm(
-      `Delete class "${classroom.name}"? This only works if it has no students, assignments or timetable entries.`
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setDeletingId(classroom.id);
-      setError("");
-
-      const response = await fetch(`/api/admin/classes/${classroom.id}`, {
-        method: "DELETE",
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to delete class.");
-      }
-
-      setClasses((previous) => previous.filter((c) => c.id !== classroom.id));
-    } catch (err) {
-      console.error("DELETE CLASS ERROR:", err);
-      setError(err instanceof Error ? err.message : "Unable to delete class.");
-    } finally {
-      setDeletingId(null);
-    }
-  }
+  }, [academicYear]);
 
   async function loadClasses() {
     try {
       setLoading(true);
       setError("");
 
-      const response = await fetch("/api/admin/classes");
-
-      const contentType = response.headers.get("content-type");
-
-      if (!contentType?.includes("application/json")) {
-        const text = await response.text();
-
-        console.error("SERVER RESPONSE:", text);
-
-        throw new Error("Server returned an unexpected response.");
-      }
+      const response = await fetch(
+        `/api/admin/classes?academicYear=${encodeURIComponent(
+          academicYear
+        )}`
+      );
 
       const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load classes.");
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to load classes");
       }
 
       setClasses(data.classes || []);
     } catch (error) {
       console.error("LOAD CLASSES ERROR:", error);
-      setError("Unable to load classes.");
+      setError("Failed to load classes.");
     } finally {
       setLoading(false);
     }
   }
 
-  const filteredClasses = classes.filter((classroom) => {
-    const searchTerm = search.toLowerCase();
+  const anglophoneClasses = classes.filter((classroom) => {
+    const section = classroom.section?.name?.toLowerCase() || "";
 
     return (
-      classroom.name.toLowerCase().includes(searchTerm) ||
-      classroom.section.name.toLowerCase().includes(searchTerm)
+      section.includes("anglo") ||
+      section.includes("english")
     );
   });
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      {/* SIDEBAR */}
-      <Sidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
+  const francophoneClasses = classes.filter((classroom) => {
+    const section = classroom.section?.name?.toLowerCase() || "";
 
-      {/* MAIN AREA */}
-      <div className="lg:ml-64">
-        {/* NAVBAR */}
-        <NavBar
-          onMenuClick={() => setSidebarOpen(true)}
-          title="Manage Classes"
-          subtitle="View and manage all school classes"
-        />
+    return (
+      section.includes("franco") ||
+      section.includes("french")
+    );
+  });
 
-        {/* PAGE CONTENT */}
-        <main className="px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-7xl">
+  const otherClasses = classes.filter((classroom) => {
+    const section = classroom.section?.name?.toLowerCase() || "";
 
-            {/* PAGE HEADER */}
-            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    return (
+      !section.includes("anglo") &&
+      !section.includes("english") &&
+      !section.includes("franco") &&
+      !section.includes("french")
+    );
+  });
+
+  const renderClassCards = (sectionClasses: Classroom[]) => {
+    if (sectionClasses.length === 0) {
+      return (
+        <div className="rounded-xl border border-dashed border-gray-300 p-6 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          No classes found in this section.
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {sectionClasses.map((classroom) => (
+          <Link
+            key={classroom.id}
+            href={`/admin/classes/${classroom.id}`}
+            className="group rounded-xl border border-gray-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 dark:hover:border-purple-700"
+          >
+            <div className="flex items-start justify-between">
               <div>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
-                    <BookOpen size={24} />
-                  </div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {classroom.name}
+                </h3>
 
-                  <div>
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                      All Classes
-                    </h1>
-
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                      Anglophone and Francophone classes for the active
-                      academic year
-                      {classes[0]?.academicYear?.name
-                        ? ` (${classes[0].academicYear.name})`
-                        : ""}
-                      .
-                    </p>
-                  </div>
-                </div>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {classroom.section?.name || "No section"}
+                </p>
               </div>
 
+              <ChevronRight
+                size={20}
+                className="text-gray-400 transition group-hover:translate-x-1 group-hover:text-purple-600"
+              />
+            </div>
+
+            <div className="mt-5 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <Users size={17} />
+
+              <span>
+                {classroom._count.students}{" "}
+                {classroom._count.students === 1
+                  ? "student"
+                  : "students"}
+              </span>
+            </div>
+          </Link>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+      <Sidebar />
+
+      <div className="lg:pl-64">
+        <Navbar />
+
+        <main className="p-4 sm:p-6 lg:p-8">
+          {/* HEADER */}
+          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                Classes
+              </h1>
+
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Manage school classes and view their students.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              {/* Academic Year */}
+              <div>
+                <label
+                  htmlFor="academicYear"
+                  className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Academic Year
+                </label>
+
+                <select
+                  id="academicYear"
+                  value={academicYear}
+                  onChange={(e) =>
+                    setAcademicYear(e.target.value)
+                  }
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                >
+                  <option value="2025/2026">
+                    2025/2026
+                  </option>
+
+                  <option value="2026/2027">
+                    2026/2027
+                  </option>
+                </select>
+              </div>
+
+              {/* Add Class */}
               <Link
                 href="/admin/classes/add"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-purple-800"
+                className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-700"
               >
                 <Plus size={18} />
                 Add Class
               </Link>
             </div>
+          </div>
 
-            {/* SEARCH */}
-            <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="relative">
-                <Search
-                  size={20}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+          {/* LOADING */}
+          {loading && (
+            <div className="flex min-h-[300px] items-center justify-center">
+              <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+                <Loader2
+                  size={22}
+                  className="animate-spin"
                 />
-
-                <input
-                  type="text"
-                  placeholder="Search class or section..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 pl-12 pr-4 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:border-purple-500 dark:focus:ring-purple-950"
-                />
+                Loading classes...
               </div>
             </div>
+          )}
 
-            {/* ERROR */}
-            {error && (
-              <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
-                {error}
-              </div>
-            )}
+          {/* ERROR */}
+          {!loading && error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
+              <p>{error}</p>
 
-            {/* LOADING */}
-            {loading ? (
-              <div className="flex min-h-300px items-center justify-center rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
-                  <Loader2 size={22} className="animate-spin" />
-                  Loading classes...
+              <button
+                onClick={loadClasses}
+                className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
+          {/* CONTENT */}
+          {!loading && !error && (
+            <div className="space-y-10">
+              {/* ANGLOPHONE */}
+              <section>
+                <div className="mb-5 flex items-center gap-3">
+                  <div className="h-8 w-1 rounded-full bg-purple-600" />
+
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                      Anglophone Section
+                    </h2>
+
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      English-speaking section
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ) : filteredClasses.length === 0 ? (
-              /* EMPTY */
-              <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
-                <BookOpen
-                  size={40}
-                  className="mx-auto mb-4 text-gray-400"
-                />
 
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  No classes found
-                </h2>
+                {renderClassCards(anglophoneClasses)}
+              </section>
 
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                  {search
-                    ? "No classes match your search."
-                    : "No classes have been created yet."}
-                </p>
+              {/* FRANCOPHONE */}
+              <section>
+                <div className="mb-5 flex items-center gap-3">
+                  <div className="h-8 w-1 rounded-full bg-purple-600" />
 
-                {!search && (
-                  <Link
-                    href="/admin/classes/add"
-                    className="mt-6 inline-flex items-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white hover:bg-purple-800"
-                  >
-                    <Plus size={18} />
-                    Add Class
-                  </Link>
-                )}
-              </div>
-            ) : (
-              /* CLASSES TABLE */
-              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-800/50">
-                      <tr>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                          Class
-                        </th>
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                      Francophone Section
+                    </h2>
 
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                          Section
-                        </th>
-
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                          Students
-                        </th>
-
-                        <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                      {filteredClasses.map((classroom) => (
-                        <tr
-                          key={classroom.id}
-                          className="transition hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                        >
-                          {/* CLASS */}
-                          <td className="px-6 py-5">
-                            <Link
-                              href={`/admin/classes/${classroom.id}/students`}
-                              className="group flex items-center gap-3"
-                            >
-                              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 text-purple-700 transition group-hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:group-hover:bg-purple-900/50">
-                                <BookOpen size={19} />
-                              </div>
-
-                              <div>
-                                <span className="font-semibold text-gray-900 group-hover:text-purple-700 dark:text-white dark:group-hover:text-purple-300">
-                                  {classroom.name}
-                                </span>
-
-                                <p className="mt-1 text-xs text-gray-400">
-                                  Click to view students
-                                </p>
-                              </div>
-                            </Link>
-                          </td>
-
-                          {/* SECTION */}
-                          <td className="px-6 py-5">
-                            <span
-                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                                classroom.section.name === "ANGLOPHONE"
-                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                                  : "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300"
-                              }`}
-                            >
-                              {classroom.section.name}
-                            </span>
-                          </td>
-
-                          {/* STUDENTS */}
-                          <td className="px-6 py-5">
-                            <Link
-                              href={`/admin/classes/${classroom.id}/students`}
-                              className="inline-flex items-center gap-2 text-sm text-gray-600 transition hover:text-purple-700 dark:text-gray-300 dark:hover:text-purple-300"
-                            >
-                              <Users size={17} />
-
-                              <span>
-                                {classroom._count.students} student
-                                {classroom._count.students !== 1 ? "s" : ""}
-                              </span>
-                            </Link>
-                          </td>
-
-                          {/* ACTIONS */}
-                          <td className="px-6 py-5">
-                            <div className="flex justify-end gap-2">
-                              <Link
-                                href={`/admin/classes/${classroom.id}/edit`}
-                                className="rounded-lg p-2 text-gray-500 transition hover:bg-blue-50 hover:text-blue-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
-                                title="Edit class"
-                              >
-                                <Pencil size={18} />
-                              </Link>
-
-                              <button
-                                type="button"
-                                disabled={deletingId === classroom.id}
-                                className="rounded-lg p-2 text-gray-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                                title="Delete class"
-                                onClick={() => handleDelete(classroom)}
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      French-speaking section
+                    </p>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+
+                {renderClassCards(francophoneClasses)}
+              </section>
+
+              {/* OTHER */}
+              {otherClasses.length > 0 && (
+                <section>
+                  <div className="mb-5 flex items-center gap-3">
+                    <div className="h-8 w-1 rounded-full bg-gray-500" />
+
+                    <div>
+                      <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                        Other Classes
+                      </h2>
+                    </div>
+                  </div>
+
+                  {renderClassCards(otherClasses)}
+                </section>
+              )}
+            </div>
+          )}
         </main>
       </div>
     </div>

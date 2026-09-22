@@ -4,6 +4,9 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
+    // =========================================================
+    // AUTHENTICATION
+    // =========================================================
     const session = await auth();
 
     if (!session?.user?.id) {
@@ -20,10 +23,14 @@ export async function GET() {
       );
     }
 
+    // =========================================================
+    // FIND TEACHER
+    // =========================================================
     const teacher = await prisma.teacher.findUnique({
       where: {
         userId: session.user.id,
       },
+
       select: {
         id: true,
       },
@@ -36,54 +43,93 @@ export async function GET() {
       );
     }
 
-    const assignments = await prisma.teacherAssignment.findMany({
-      where: {
-        teacherId: teacher.id,
-      },
-      include: {
-        section: {
-          select: {
-            id: true,
-            name: true,
-          },
+    // =========================================================
+    // LOAD ASSIGNMENTS
+    // =========================================================
+    const assignments =
+      await prisma.teacherAssignment.findMany({
+        where: {
+          teacherId: teacher.id,
         },
-        classroom: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        subject: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            coefficient: true,
-          },
-        },
-      },
-      orderBy: [
-        {
-          classroom: {
-            name: "asc",
-          },
-        },
-        {
-          subject: {
-            name: "asc",
-          },
-        },
-      ],
-    });
 
-    return NextResponse.json({
-      assignments,
-    });
+        include: {
+          section: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          classroom: {
+            select: {
+              id: true,
+              name: true,
+
+              students: {
+                select: {
+                  id: true,
+                  matricule: true,
+                  firstName: true,
+                  lastName: true,
+                  gender: true,
+                },
+
+                orderBy: [
+                  {
+                    lastName: "asc",
+                  },
+                  {
+                    firstName: "asc",
+                  },
+                ],
+              },
+            },
+          },
+
+          subject: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              coefficient: true,
+            },
+          },
+        },
+
+        orderBy: [
+          {
+            classroom: {
+              name: "asc",
+            },
+          },
+          {
+            subject: {
+              name: "asc",
+            },
+          },
+        ],
+      });
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+    return NextResponse.json(
+      {
+        success: true,
+        assignments,
+      },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("Teacher assignments error:", error);
+    console.error(
+      "GET TEACHER ASSIGNMENTS ERROR:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Failed to load teaching assignments" },
+      {
+        error: "Failed to load teaching assignments",
+      },
       { status: 500 }
     );
   }

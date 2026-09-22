@@ -1,12 +1,12 @@
-
 import type { Metadata } from "next";
+
 import "@fontsource/poppins/400.css";
 import "@fontsource/poppins/500.css";
 import "@fontsource/poppins/600.css";
 import "@fontsource/poppins/700.css";
-import "./globals.css";
-import  ThemeProvider from "@/components/providers/ThemeProvider";
 
+import "./globals.css";
+import ThemeProvider from "@/components/providers/ThemeProvider";
 
 export const metadata: Metadata = {
   title: "GradeFlow",
@@ -21,11 +21,15 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-white">
-        <ThemeProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
           {children}
         </ThemeProvider>
       </body>
     </html>
   );
 }
-

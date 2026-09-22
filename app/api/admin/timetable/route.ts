@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
@@ -52,13 +51,8 @@ function isWithinAvailability(
   const lessonStart = timeToMinutes(startTime);
   const lessonEnd = timeToMinutes(endTime);
 
-  const availableStart = timeToMinutes(
-    availability.startTime
-  );
-
-  const availableEnd = timeToMinutes(
-    availability.endTime
-  );
+  const availableStart = timeToMinutes(availability.startTime);
+  const availableEnd = timeToMinutes(availability.endTime);
 
   return (
     lessonStart >= availableStart &&
@@ -87,7 +81,10 @@ function overlaps(
 
 export async function GET(request: Request) {
   const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+
+  if (!guard.ok) {
+    return guard.response;
+  }
 
   try {
     // --------------------------------------------------
@@ -96,28 +93,18 @@ export async function GET(request: Request) {
 
     const session = await auth();
 
-    console.log(
-      "========== ADMIN TIMETABLE GET =========="
-    );
-    console.log("SESSION USER:", session?.user);
-    console.log("USER EMAIL:", session?.user?.email);
-    console.log("USER ID:", session?.user?.id);
-    console.log("USER ROLE:", session?.user?.role);
-    console.log("==========================================");
-
     if (!session?.user?.email) {
       return NextResponse.json(
         {
           success: false,
           error: "Unauthorized",
-          message: "No authenticated session was found.",
         },
         { status: 401 }
       );
     }
 
     // --------------------------------------------------
-    // VERIFY ADMIN FROM DATABASE
+    // VERIFY ADMIN
     // --------------------------------------------------
 
     const admin = await prisma.user.findUnique({
@@ -136,8 +123,7 @@ export async function GET(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unauthorized",
-          message: "User account was not found.",
+          error: "User account was not found.",
         },
         { status: 401 }
       );
@@ -147,16 +133,24 @@ export async function GET(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Access denied",
-          message: "This account has been suspended.",
+          error: "This account has been suspended.",
         },
         { status: 403 }
       );
     }
 
-    
+    if (admin.role !== Role.ADMIN) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Administrator privileges are required.",
+        },
+        { status: 403 }
+      );
+    }
+
     // --------------------------------------------------
-    // GET REQUEST PARAMETERS
+    // REQUEST PARAMETERS
     // --------------------------------------------------
 
     const { searchParams } = new URL(request.url);
@@ -166,8 +160,12 @@ export async function GET(request: Request) {
 
     const termId = searchParams.get("termId");
 
+    console.log("========== TIMETABLE GET ==========");
+    console.log("Academic Year:", academicYearId);
+    console.log("Term:", termId);
+
     // --------------------------------------------------
-    // GET ACADEMIC YEARS AND TERMS
+    // ACADEMIC YEARS
     // --------------------------------------------------
 
     const academicYears =
@@ -185,14 +183,7 @@ export async function GET(request: Request) {
       });
 
     // --------------------------------------------------
-    // GET ALL TEACHERS
-    //
-    // IMPORTANT:
-    // We get EVERY teacher, including teachers who
-    // have submitted NO availability.
-    //
-    // This is what allows us to calculate:
-    // 24 MISSING + 1 PENDING
+    // TEACHERS + AVAILABILITY + ASSIGNMENTS
     // --------------------------------------------------
 
     const teachers =
@@ -200,7 +191,6 @@ export async function GET(request: Request) {
         orderBy: {
           fullName: "asc",
         },
-
         select: {
           id: true,
           teacherId: true,
@@ -210,20 +200,10 @@ export async function GET(request: Request) {
           email: true,
           phone: true,
 
-          // --------------------------------------------
-          // TEACHER AVAILABILITY
-          // --------------------------------------------
-
           availability: {
-            orderBy: [
-              {
-                day: "asc",
-              },
-              {
-                startTime: "asc",
-              },
-            ],
-
+            orderBy: {
+              startTime: "asc",
+            },
             select: {
               id: true,
               day: true,
@@ -231,14 +211,8 @@ export async function GET(request: Request) {
               endTime: true,
               status: true,
               note: true,
-              createdAt: true,
-              updatedAt: true,
             },
           },
-
-          // --------------------------------------------
-          // TEACHER ASSIGNMENTS
-          // --------------------------------------------
 
           assignments: {
             select: {
@@ -272,7 +246,7 @@ export async function GET(request: Request) {
       });
 
     // --------------------------------------------------
-    // BUILD AVAILABILITY SUMMARY
+    // AVAILABILITY SUMMARY
     // --------------------------------------------------
 
     const availabilitySummary = teachers.map(
@@ -298,25 +272,6 @@ export async function GET(request: Request) {
               AvailabilityStatus.REJECTED
           );
 
-        // ----------------------------------------------
-        // DETERMINE OVERALL TEACHER STATUS
-        // ----------------------------------------------
-        //
-        // MISSING:
-        // No availability has been submitted.
-        //
-        // PENDING:
-        // Availability exists but nothing has been
-        // approved yet.
-        //
-        // READY:
-        // At least one availability slot is approved.
-        //
-        // REJECTED:
-        // Availability exists but all submitted slots
-        // are rejected.
-        // ----------------------------------------------
-
         let status:
           | "READY"
           | "PENDING"
@@ -327,9 +282,7 @@ export async function GET(request: Request) {
           status = "READY";
         } else if (pending.length > 0) {
           status = "PENDING";
-        } else if (
-          rejected.length > 0
-        ) {
+        } else if (rejected.length > 0) {
           status = "REJECTED";
         } else {
           status = "MISSING";
@@ -344,93 +297,52 @@ export async function GET(request: Request) {
           email: teacher.email,
           phone: teacher.phone,
 
-          // Counts
           approvedCount: approved.length,
           pendingCount: pending.length,
           rejectedCount: rejected.length,
 
-          // Overall status
           status,
 
-          // Actual availability records
           availability: teacher.availability,
-
-          // Teacher assignments
           assignments: teacher.assignments,
         };
       }
     );
 
     // --------------------------------------------------
-    // CALCULATE GLOBAL AVAILABILITY COUNTS
-    //
-    // These values should give:
-    //
-    // 24 MISSING
-    // 1 PENDING
-    //
-    // when 25 teachers exist and only one submitted.
+    // AVAILABILITY COUNTS
     // --------------------------------------------------
 
     const availabilityCounts = {
       totalTeachers: teachers.length,
 
-      missing: availabilitySummary.filter(
-        (teacher) =>
-          teacher.status === "MISSING"
-      ).length,
+      missing:
+        availabilitySummary.filter(
+          (teacher) =>
+            teacher.status === "MISSING"
+        ).length,
 
-      pending: availabilitySummary.filter(
-        (teacher) =>
-          teacher.status === "PENDING"
-      ).length,
+      pending:
+        availabilitySummary.filter(
+          (teacher) =>
+            teacher.status === "PENDING"
+        ).length,
 
-      ready: availabilitySummary.filter(
-        (teacher) =>
-          teacher.status === "READY"
-      ).length,
+      ready:
+        availabilitySummary.filter(
+          (teacher) =>
+            teacher.status === "READY"
+        ).length,
 
-      rejected: availabilitySummary.filter(
-        (teacher) =>
-          teacher.status === "REJECTED"
-      ).length,
+      rejected:
+        availabilitySummary.filter(
+          (teacher) =>
+            teacher.status === "REJECTED"
+        ).length,
     };
 
-    console.log(
-      "========== AVAILABILITY COUNTS =========="
-    );
-
-    console.log(
-      "TOTAL TEACHERS:",
-      availabilityCounts.totalTeachers
-    );
-
-    console.log(
-      "MISSING:",
-      availabilityCounts.missing
-    );
-
-    console.log(
-      "PENDING:",
-      availabilityCounts.pending
-    );
-
-    console.log(
-      "READY:",
-      availabilityCounts.ready
-    );
-
-    console.log(
-      "REJECTED:",
-      availabilityCounts.rejected
-    );
-
-    console.log(
-      "========================================="
-    );
-
     // --------------------------------------------------
-    // GET TIMETABLE
+    // TIMETABLE
     // --------------------------------------------------
 
     const timetableWhere: {
@@ -459,8 +371,6 @@ export async function GET(request: Request) {
               firstName: true,
               lastName: true,
               fullName: true,
-              email: true,
-              phone: true,
             },
           },
 
@@ -469,13 +379,20 @@ export async function GET(request: Request) {
               id: true,
               name: true,
               code: true,
-              coefficient: true,
             },
           },
 
           classroom: {
-            include: {
-              section: true,
+            select: {
+              id: true,
+              name: true,
+
+              section: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
 
@@ -506,30 +423,40 @@ export async function GET(request: Request) {
       });
 
     // --------------------------------------------------
-    // PUBLICATION STATE PER CLASS (Phase 10)
+    // PUBLICATIONS
     // --------------------------------------------------
 
     const publicationWhere: {
       termId?: string;
-      term?: { academicYearId: string };
     } = {};
 
     if (termId) {
       publicationWhere.termId = termId;
-    } else if (academicYearId) {
-      publicationWhere.term = { academicYearId };
     }
 
-    const publications = await prisma.timetablePublication.findMany({
-      where: publicationWhere,
-      include: {
-        classroom: { select: { id: true, name: true } },
-        term: { select: { id: true, name: true } },
-      },
-    });
+    const publications =
+      await prisma.timetablePublication.findMany({
+        where: publicationWhere,
+
+        include: {
+          classroom: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          term: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
 
     // --------------------------------------------------
-    // RETURN DATA
+    // RESPONSE
     // --------------------------------------------------
 
     return NextResponse.json({
@@ -539,34 +466,55 @@ export async function GET(request: Request) {
 
       availabilitySummary,
 
-      // IMPORTANT:
-      // Global counts are now available to the frontend.
       availabilityCounts,
 
       timetable,
 
-      publications: publications.map((publication) => ({
-        id: publication.id,
-        termId: publication.termId,
-        classroomId: publication.classroomId,
-        class: publication.classroom.name,
-        term: publication.term.name,
-        status: publication.status,
-        publishedAt: publication.publishedAt,
-        notes: publication.notes,
-      })),
+      publications: publications.map(
+        (publication) => ({
+          id: publication.id,
+          termId: publication.termId,
+          classroomId:
+            publication.classroomId,
+
+          class:
+            publication.classroom.name,
+
+          term:
+            publication.term.name,
+
+          status: publication.status,
+
+          publishedAt:
+            publication.publishedAt,
+
+          notes: publication.notes,
+        })
+      ),
     });
   } catch (error) {
     console.error(
-      "ADMIN TIMETABLE GET ERROR:",
-      error
+      "========================================"
+    );
+
+    console.error(
+      "ADMIN TIMETABLE GET ERROR"
+    );
+
+    console.error(error);
+
+    console.error(
+      "========================================"
     );
 
     return NextResponse.json(
       {
         success: false,
-        error:
-          "Failed to load timetable data.",
+        error: "Failed to load timetable data.",
+        message:
+          error instanceof Error
+            ? error.message
+            : String(error),
       },
       { status: 500 }
     );
@@ -579,7 +527,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+
+  if (!guard.ok) {
+    return guard.response;
+  }
 
   try {
     // --------------------------------------------------
@@ -593,15 +544,13 @@ export async function POST(request: Request) {
         {
           success: false,
           error: "Unauthorized",
-          message:
-            "No authenticated session was found.",
         },
         { status: 401 }
       );
     }
 
     // --------------------------------------------------
-    // VERIFY ADMIN FROM DATABASE
+    // VERIFY ADMIN
     // --------------------------------------------------
 
     const admin = await prisma.user.findUnique({
@@ -620,9 +569,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unauthorized",
-          message:
-            "User account was not found.",
+          error: "User account was not found.",
         },
         { status: 401 }
       );
@@ -632,9 +579,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Access denied",
-          message:
-            "This account has been suspended.",
+          error: "This account has been suspended.",
         },
         { status: 403 }
       );
@@ -644,18 +589,15 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Access denied",
-          message:
+          error:
             "Administrator privileges are required.",
-          currentRole: admin.role,
-          expectedRole: Role.ADMIN,
         },
         { status: 403 }
       );
     }
 
     // --------------------------------------------------
-    // REQUEST DATA
+    // REQUEST BODY
     // --------------------------------------------------
 
     const body = await request.json();
@@ -699,7 +641,7 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // GET ALL TEACHER ASSIGNMENTS
+    // GET TEACHER ASSIGNMENTS
     // --------------------------------------------------
 
     const assignments =
@@ -753,10 +695,7 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // GET APPROVED AVAILABILITY ONLY
-    //
-    // PENDING availability must NOT be used to
-    // generate the timetable.
+    // APPROVED AVAILABILITY
     // --------------------------------------------------
 
     const approvedAvailability =
@@ -808,11 +747,7 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // GET EXISTING TIMETABLE
-    //
-    // IMPORTANT:
-    // Existing timetable entries are NOT deleted.
-    // Running Generate again only adds new entries.
+    // EXISTING TIMETABLE
     // --------------------------------------------------
 
     const existingTimetable =
@@ -834,7 +769,7 @@ export async function POST(request: Request) {
       });
 
     // --------------------------------------------------
-    // TRACK ALREADY SCHEDULED ASSIGNMENTS
+    // TRACK SCHEDULED ASSIGNMENTS
     // --------------------------------------------------
 
     const scheduledAssignmentKeys =
@@ -861,26 +796,22 @@ export async function POST(request: Request) {
       new Set<string>();
 
     for (const entry of existingTimetable) {
-      const teacherKey = [
-        entry.teacherId,
-        entry.day,
-        entry.startTime,
-        entry.endTime,
-      ].join("|");
-
-      const classroomKey = [
-        entry.classroomId,
-        entry.day,
-        entry.startTime,
-        entry.endTime,
-      ].join("|");
-
       occupiedTeacherSlots.add(
-        teacherKey
+        [
+          entry.teacherId,
+          entry.day,
+          entry.startTime,
+          entry.endTime,
+        ].join("|")
       );
 
       occupiedClassroomSlots.add(
-        classroomKey
+        [
+          entry.classroomId,
+          entry.day,
+          entry.startTime,
+          entry.endTime,
+        ].join("|")
       );
     }
 
@@ -911,7 +842,7 @@ export async function POST(request: Request) {
     }> = [];
 
     // --------------------------------------------------
-    // PROCESS EACH ASSIGNMENT
+    // PROCESS ASSIGNMENTS
     // --------------------------------------------------
 
     for (const assignment of assignments) {
@@ -921,10 +852,6 @@ export async function POST(request: Request) {
         assignment.subjectId,
       ].join("|");
 
-      // -----------------------------------------------
-      // ALREADY SCHEDULED
-      // -----------------------------------------------
-
       if (
         scheduledAssignmentKeys.has(
           assignmentKey
@@ -932,10 +859,6 @@ export async function POST(request: Request) {
       ) {
         continue;
       }
-
-      // -----------------------------------------------
-      // CHECK TEACHER AVAILABILITY
-      // -----------------------------------------------
 
       const teacherAvailability =
         availabilityByTeacher.get(
@@ -967,14 +890,12 @@ export async function POST(request: Request) {
 
       let assigned = false;
 
-      // -----------------------------------------------
-      // SEARCH FOR A FREE SLOT
-      // -----------------------------------------------
+      // ------------------------------------------------
+      // SEARCH FOR SLOT
+      // ------------------------------------------------
 
       for (const day of DAYS) {
-        if (assigned) {
-          break;
-        }
+        if (assigned) break;
 
         const dayAvailability =
           teacherAvailability.filter(
@@ -989,13 +910,7 @@ export async function POST(request: Request) {
         }
 
         for (const slot of TIME_SLOTS) {
-          if (assigned) {
-            break;
-          }
-
-          // -------------------------------------------
-          // CHECK AVAILABILITY
-          // -------------------------------------------
+          if (assigned) break;
 
           const available =
             dayAvailability.some(
@@ -1011,9 +926,9 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // -------------------------------------------
-          // CHECK TEACHER CONFLICT
-          // -------------------------------------------
+          // --------------------------------------------
+          // TEACHER CONFLICT
+          // --------------------------------------------
 
           const teacherConflict =
             occupiedTeacherSlots.has(
@@ -1029,9 +944,9 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // -------------------------------------------
-          // CHECK CLASSROOM CONFLICT
-          // -------------------------------------------
+          // --------------------------------------------
+          // CLASSROOM CONFLICT
+          // --------------------------------------------
 
           const classroomConflict =
             occupiedClassroomSlots.has(
@@ -1047,9 +962,9 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // -------------------------------------------
-          // CHECK TEACHER OVERLAP
-          // -------------------------------------------
+          // --------------------------------------------
+          // TEACHER OVERLAP
+          // --------------------------------------------
 
           const hasTeacherOverlap =
             existingTimetable.some(
@@ -1081,9 +996,9 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // -------------------------------------------
-          // CHECK CLASSROOM OVERLAP
-          // -------------------------------------------
+          // --------------------------------------------
+          // CLASSROOM OVERLAP
+          // --------------------------------------------
 
           const hasClassroomOverlap =
             existingTimetable.some(
@@ -1115,29 +1030,35 @@ export async function POST(request: Request) {
             continue;
           }
 
-          // -------------------------------------------
-          // CREATE NEW ENTRY
-          // -------------------------------------------
+          // --------------------------------------------
+          // CREATE ENTRY
+          // --------------------------------------------
 
           const newEntry = {
             classroomId:
               assignment.classroomId,
+
             subjectId:
               assignment.subjectId,
+
             teacherId:
               assignment.teacherId,
+
             academicYearId,
+
             termId,
+
             day,
+
             startTime:
               slot.startTime,
+
             endTime:
               slot.endTime,
           };
 
           newEntries.push(newEntry);
 
-          // Mark teacher slot as occupied.
           occupiedTeacherSlots.add(
             [
               assignment.teacherId,
@@ -1147,7 +1068,6 @@ export async function POST(request: Request) {
             ].join("|")
           );
 
-          // Mark classroom slot as occupied.
           occupiedClassroomSlots.add(
             [
               assignment.classroomId,
@@ -1157,7 +1077,6 @@ export async function POST(request: Request) {
             ].join("|")
           );
 
-          // Mark assignment as scheduled.
           scheduledAssignmentKeys.add(
             assignmentKey
           );
@@ -1166,9 +1085,9 @@ export async function POST(request: Request) {
         }
       }
 
-      // -----------------------------------------------
-      // COULD NOT SCHEDULE
-      // -----------------------------------------------
+      // ------------------------------------------------
+      // UNSCHEDULED
+      // ------------------------------------------------
 
       if (!assigned) {
         unscheduled.push({
@@ -1191,111 +1110,69 @@ export async function POST(request: Request) {
     }
 
     // --------------------------------------------------
-    // SAVE NEW ENTRIES
+    // SAVE
     // --------------------------------------------------
 
-    let createdEntries: any[] = [];
-
     if (newEntries.length > 0) {
-      createdEntries =
-        await prisma.$transaction(
-          async (tx) => {
-            await tx.timetable.createMany({
-              data: newEntries,
-            });
-
-            return tx.timetable.findMany({
-              where: {
-                academicYearId,
-                termId,
-              },
-
-              include: {
-                teacher: {
-                  select: {
-                    id: true,
-                    teacherId: true,
-                    firstName: true,
-                    lastName: true,
-                    fullName: true,
-                  },
-                },
-
-                subject: {
-                  select: {
-                    id: true,
-                    name: true,
-                    code: true,
-                    coefficient: true,
-                  },
-                },
-
-                classroom: {
-                  include: {
-                    section: true,
-                  },
-                },
-              },
-
-              orderBy: [
-                {
-                  day: "asc",
-                },
-                {
-                  startTime: "asc",
-                },
-              ],
-            });
-          }
-        );
-    } else {
-      // Nothing new was created.
-      // Return the existing timetable unchanged.
-
-      createdEntries =
-        await prisma.timetable.findMany({
-          where: {
-            academicYearId,
-            termId,
-          },
-
-          include: {
-            teacher: {
-              select: {
-                id: true,
-                teacherId: true,
-                firstName: true,
-                lastName: true,
-                fullName: true,
-              },
-            },
-
-            subject: {
-              select: {
-                id: true,
-                name: true,
-                code: true,
-                coefficient: true,
-              },
-            },
-
-            classroom: {
-              include: {
-                section: true,
-              },
-            },
-          },
-
-          orderBy: [
-            {
-              day: "asc",
-            },
-            {
-              startTime: "asc",
-            },
-          ],
-        });
+      await prisma.timetable.createMany({
+        data: newEntries,
+      });
     }
+
+    // --------------------------------------------------
+    // LOAD FINAL TIMETABLE
+    // --------------------------------------------------
+
+    const finalTimetable =
+      await prisma.timetable.findMany({
+        where: {
+          academicYearId,
+          termId,
+        },
+
+        include: {
+          teacher: {
+            select: {
+              id: true,
+              teacherId: true,
+              firstName: true,
+              lastName: true,
+              fullName: true,
+            },
+          },
+
+          subject: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+
+          classroom: {
+            select: {
+              id: true,
+              name: true,
+
+              section: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+
+        orderBy: [
+          {
+            day: "asc",
+          },
+          {
+            startTime: "asc",
+          },
+        ],
+      });
 
     // --------------------------------------------------
     // RESPONSE
@@ -1306,9 +1183,7 @@ export async function POST(request: Request) {
 
       message:
         newEntries.length > 0
-          ? `Timetable updated successfully. ${
-              newEntries.length
-            } new period${
+          ? `Timetable updated successfully. ${newEntries.length} new period${
               newEntries.length === 1
                 ? ""
                 : "s"
@@ -1319,27 +1194,39 @@ export async function POST(request: Request) {
         newEntries.length,
 
       totalScheduled:
-        createdEntries.length,
+        finalTimetable.length,
 
       unscheduled,
 
       timetable:
-        createdEntries,
+        finalTimetable,
     });
   } catch (error) {
     console.error(
-      "TIMETABLE GENERATION ERROR:",
-      error
+      "========================================"
+    );
+
+    console.error(
+      "TIMETABLE GENERATION ERROR"
+    );
+
+    console.error(error);
+
+    console.error(
+      "========================================"
     );
 
     return NextResponse.json(
       {
         success: false,
         error:
-          "Failed to generate timetable",
+          "Failed to generate timetable.",
+        message:
+          error instanceof Error
+            ? error.message
+            : String(error),
       },
       { status: 500 }
     );
   }
 }
-

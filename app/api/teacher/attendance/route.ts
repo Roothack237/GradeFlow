@@ -12,6 +12,9 @@ type AttendanceStatus =
 
 export async function POST(req: Request) {
   try {
+    // =========================================================
+    // 1. AUTHENTICATE TEACHER
+    // =========================================================
     const session = await auth();
 
     if (!session?.user?.email) {
@@ -21,7 +24,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Find the logged-in teacher
     const user = await prisma.user.findUnique({
       where: {
         email: session.user.email,
@@ -40,6 +42,9 @@ export async function POST(req: Request) {
 
     const teacherId = user.teacher.id;
 
+    // =========================================================
+    // 2. READ REQUEST
+    // =========================================================
     const body = await req.json();
 
     const {
@@ -50,10 +55,9 @@ export async function POST(req: Request) {
       students,
     } = body;
 
-    // ---------------------------------------------------------
-    // VALIDATION
-    // ---------------------------------------------------------
-
+    // =========================================================
+    // 3. VALIDATE REQUIRED FIELDS
+    // =========================================================
     if (!classroomId) {
       return NextResponse.json(
         { error: "Classroom is required." },
@@ -89,18 +93,20 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------------------------------------------------------
-    // VERIFY TEACHER ASSIGNMENT
-    // ---------------------------------------------------------
-
-    const assignment =
-      await prisma.teacherAssignment.findFirst({
-        where: {
-          teacherId,
-          classroomId,
-          subjectId,
-        },
-      });
+    // =========================================================
+    // 4. VERIFY TEACHER ASSIGNMENT
+    // =========================================================
+    const assignment = await prisma.teacherAssignment.findFirst({
+      where: {
+        teacherId,
+        classroomId,
+        subjectId,
+      },
+      include: {
+        subject: true,
+        classroom: true,
+      },
+    });
 
     if (!assignment) {
       return NextResponse.json(
@@ -112,26 +118,27 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------------------------------------------------------
-    // FIND TERM
-    // ---------------------------------------------------------
-
-    const academicYear =
-      await prisma.academicYear.findFirst({
-        where: {
-          name: "2025/2026",
-        },
-      });
+    // =========================================================
+    // 5. GET ACADEMIC YEAR
+    // =========================================================
+    const academicYear = await prisma.academicYear.findFirst({
+      where: {
+        name: "2026/2027",
+      },
+    });
 
     if (!academicYear) {
       return NextResponse.json(
         {
-          error: "Academic year 2025/2026 was not found.",
+          error: "Academic year 2026/2027 was not found.",
         },
         { status: 404 }
       );
     }
 
+    // =========================================================
+    // 6. GET TERM
+    // =========================================================
     const foundTerm = await prisma.term.findFirst({
       where: {
         academicYearId: academicYear.id,
@@ -155,18 +162,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------------------------------------------------------
-    // DETERMINE SEQUENCE
-    // ---------------------------------------------------------
-    //
-    // First Term  -> First Sequence
-    // Second Term -> Third Sequence
-    // Third Term  -> Fifth Sequence
-    //
-    // Attendance page currently represents the first
-    // sequence of the selected term.
-    // ---------------------------------------------------------
-
+    // =========================================================
+    // 7. GET FIRST SEQUENCE
+    // =========================================================
     const sequence = foundTerm.sequences[0];
 
     if (!sequence) {
@@ -178,32 +176,42 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------------------------------------------------------
-    // VALIDATE STUDENTS
-    // ---------------------------------------------------------
-
+    // =========================================================
+    // 8. EXTRACT STUDENT IDS
+    // =========================================================
     const studentIds = students.map(
-      (student: { studentId: string }) =>
-        student.studentId
+      (student: { studentId: string }) => student.studentId
     );
 
-    const classroomStudents =
-      await prisma.student.findMany({
-        where: {
-          id: {
-            in: studentIds,
-          },
-          classroomId,
-          status: "ACTIVE",
+    // =========================================================
+    // 9. VERIFY STUDENTS BELONG TO CLASS
+    // =========================================================
+    const classroomStudents = await prisma.student.findMany({
+      where: {
+        id: {
+          in: studentIds,
         },
-        select: {
-          id: true,
-        },
-      });
+        classroomId,
+        status: "ACTIVE",
+      },
+      select: {
+        id: true,
+      },
+    });
 
     const validStudentIds = new Set(
       classroomStudents.map((student) => student.id)
     );
+
+    // =========================================================
+    // 10. VALIDATE EACH STUDENT
+    // =========================================================
+    const validStatuses: AttendanceStatus[] = [
+      "PRESENT",
+      "ABSENT",
+      "LATE",
+      "EXCUSED",
+    ];
 
     for (const student of students) {
       if (!validStudentIds.has(student.studentId)) {
@@ -215,13 +223,6 @@ export async function POST(req: Request) {
         );
       }
 
-      const validStatuses: AttendanceStatus[] = [
-        "PRESENT",
-        "ABSENT",
-        "LATE",
-        "EXCUSED",
-      ];
-
       if (!validStatuses.includes(student.status)) {
         return NextResponse.json(
           {
@@ -232,112 +233,114 @@ export async function POST(req: Request) {
       }
     }
 
-    // ---------------------------------------------------------
-    // DATE
-    // ---------------------------------------------------------
-
+    // =========================================================
+    // 11. VALIDATE DATE
+    // =========================================================
     const attendanceDate = new Date(`${date}T00:00:00`);
 
     if (Number.isNaN(attendanceDate.getTime())) {
       return NextResponse.json(
-        { error: "Invalid attendance date." },
+        {
+          error: "Invalid attendance date.",
+        },
         { status: 400 }
       );
     }
 
-    // ---------------------------------------------------------
-    // SAVE ATTENDANCE
-    // ---------------------------------------------------------
-
+    // =========================================================
+    // 12. SAVE ATTENDANCE
+    // =========================================================
     const savedAttendance = [];
 
     for (const student of students) {
-      const attendance =
-        await prisma.attendance.upsert({
-          where: {
-            studentId_subjectId_date: {
-              studentId: student.studentId,
-              subjectId,
-              date: attendanceDate,
-            },
-          },
-
-          update: {
-            status: student.status as AttendanceStatus,
-
-            // Important:
-            // If another teacher edits this record,
-            // the current responsible teacher becomes
-            // the teacher who last saved it.
-            teacherId,
-            sequenceId: sequence.id,
-          },
-
-          create: {
+      const attendance = await prisma.attendance.upsert({
+        where: {
+          studentId_subjectId_date: {
             studentId: student.studentId,
             subjectId,
-            teacherId,
-            sequenceId: sequence.id,
             date: attendanceDate,
-            status: student.status as AttendanceStatus,
           },
-        });
+        },
+
+        update: {
+          status: student.status as AttendanceStatus,
+          teacherId,
+          sequenceId: sequence.id,
+        },
+
+        create: {
+          studentId: student.studentId,
+          subjectId,
+          teacherId,
+          sequenceId: sequence.id,
+          date: attendanceDate,
+          status: student.status as AttendanceStatus,
+        },
+      });
 
       savedAttendance.push(attendance);
     }
 
-    /*
-     * Notify the administration and run the absence alert check through the
-     * existing notification system. Failures here must never break the
-     * attendance submission.
-     */
-
+    // =========================================================
+    // 13. NOTIFY ADMINS
+    // =========================================================
     try {
-      const classroomRecord = await prisma.classroom.findUnique({
-        where: { id: classroomId },
-        select: { name: true },
-      });
-
       await notifyAdmins({
         title: "Attendance submitted",
-        message: `${user.teacher.fullName} submitted attendance for ${
-          classroomRecord?.name ?? "a class"
-        }.`,
+
+        message: `${user.teacher.fullName} submitted attendance for ${assignment.classroom.name} - ${assignment.subject.name}.`,
+
         type: "INFO",
+
         senderId: user.id,
+
         relatedType: "ATTENDANCE",
+
         relatedId: classroomId,
+
         actionUrl: "/admin/attendance",
       });
     } catch (notificationError) {
       console.error(
-        "ATTENDANCE SUBMISSION NOTIFICATION ERROR:",
+        "ATTENDANCE NOTIFICATION ERROR:",
         notificationError
       );
     }
 
+    // =========================================================
+    // 14. CHECK ABSENCE ALERTS
+    // =========================================================
     try {
       await checkAbsenceAlerts({
-        studentIds: studentIds,
+        studentIds,
         subjectId,
         senderId: user.id,
       });
     } catch (alertError) {
-      console.error("ABSENCE ALERT CHECK ERROR:", alertError);
+      console.error(
+        "ABSENCE ALERT CHECK ERROR:",
+        alertError
+      );
     }
 
+    // =========================================================
+    // 15. RESPONSE
+    // =========================================================
     return NextResponse.json(
       {
         success: true,
+
         message: "Attendance saved successfully.",
+
         count: savedAttendance.length,
+
         attendance: savedAttendance,
       },
       { status: 200 }
     );
   } catch (error) {
     console.error(
-      "TEACHER ATTENDANCE POST ERROR:",
+      "SAVE TEACHER ATTENDANCE ERROR:",
       error
     );
 

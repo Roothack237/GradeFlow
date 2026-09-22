@@ -1,125 +1,34 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "@/lib/admin-auth";
-import { logAudit } from "@/lib/audit";
-import { badRequest, serverError, str } from "@/lib/http";
 
 export async function GET(
-  request: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
-
   try {
     const { id } = await params;
 
-    const classroom = await prisma.classroom.findUnique({
-      where: { id },
-      include: {
-        section: true,
-        academicYear: { select: { id: true, name: true, isActive: true } },
-        _count: { select: { students: true } },
-      },
-    });
-
-    if (!classroom) {
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
-    }
-
-    return NextResponse.json({ classroom });
-  } catch (error) {
-    return serverError("GET CLASS ERROR", error);
-  }
-}
-
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
-
-  try {
-    const { id } = await params;
-    const body = await request.json();
-
-    const classroom = await prisma.classroom.findUnique({ where: { id } });
-
-    if (!classroom) {
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
-    }
-
-    const name = body.name !== undefined ? str(body.name) : classroom.name;
-    const sectionId =
-      body.sectionId !== undefined ? str(body.sectionId) : classroom.sectionId;
-
-    if (!name) return badRequest("Class name is required.");
-    if (!sectionId) return badRequest("Section is required.");
-
-    // A class can never be moved to a different academic year — that would
-    // silently mix that year's students/history with another year.
-    const duplicate = await prisma.classroom.findFirst({
-      where: {
-        id: { not: id },
-        academicYearId: classroom.academicYearId,
-        sectionId,
-        name,
-      },
-    });
-
-    if (duplicate) {
+    if (!id) {
       return NextResponse.json(
-        { error: `A class named "${name}" already exists in this section for this year.` },
-        { status: 409 }
+        {
+          success: false,
+          error: "Classroom ID is required",
+        },
+        { status: 400 }
       );
     }
 
-    const updated = await prisma.classroom.update({
-      where: { id },
-      data: { name, sectionId },
+    const classroom = await prisma.classroom.findUnique({
+      where: {
+        id,
+      },
       include: {
         section: true,
-        academicYear: { select: { id: true, name: true, isActive: true } },
-      },
-    });
-
-    await logAudit({
-      actorId: guard.user.id,
-      actorName: guard.user.fullName,
-      action: "CLASS_UPDATED",
-      entityType: "Classroom",
-      entityId: id,
-      description: `Updated class "${updated.name}".`,
-    });
-
-    return NextResponse.json({
-      message: "Class updated successfully.",
-      classroom: updated,
-    });
-  } catch (error) {
-    return serverError("UPDATE CLASS ERROR", error);
-  }
-}
-
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
-
-  try {
-    const { id } = await params;
-
-    const classroom = await prisma.classroom.findUnique({
-      where: { id },
-      include: {
+        academicYear: true,
+        students: true,
         _count: {
           select: {
             students: true,
-            assignments: true,
-            timetable: true,
           },
         },
       },
@@ -127,55 +36,28 @@ export async function DELETE(
 
     if (!classroom) {
       return NextResponse.json(
-        { error: "Class not found" },
+        {
+          success: false,
+          error: "Classroom not found",
+        },
         { status: 404 }
       );
     }
 
-    if (classroom._count.students > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "This class cannot be deleted because it has students.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (
-      classroom._count.assignments > 0 ||
-      classroom._count.timetable > 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "This class cannot be deleted because it is being used by assignments or the timetable.",
-        },
-        { status: 400 }
-      );
-    }
-
-    await prisma.classroom.delete({
-      where: { id },
-    });
-
-    await logAudit({
-      actorId: guard.user.id,
-      actorName: guard.user.fullName,
-      action: "CLASS_DELETED",
-      entityType: "Classroom",
-      entityId: id,
-      description: `Deleted class "${classroom.name}".`,
-    });
-
     return NextResponse.json({
-      message: "Class deleted successfully",
+      success: true,
+      classroom,
     });
   } catch (error) {
-    console.error(error);
+    console.error("LOAD CLASS STUDENTS ERROR:", error);
 
     return NextResponse.json(
-      { error: "Failed to delete class" },
+      {
+        success: false,
+        error: "Failed to load class students",
+        message:
+          error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }

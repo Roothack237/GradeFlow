@@ -4,7 +4,10 @@ import { requireAdmin } from "@/lib/admin-auth";
 
 export async function GET() {
   const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+
+  if (!guard.ok) {
+    return guard.response;
+  }
 
   try {
     const sections = await prisma.section.findMany({
@@ -13,7 +16,9 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(sections);
+    return NextResponse.json({
+      sections,
+    });
   } catch (error) {
     console.error("GET SECTIONS ERROR:", error);
 

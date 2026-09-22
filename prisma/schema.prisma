@@ -24,17 +24,6 @@ enum SectionType {
   FRANCOPHONE
 }
 
-/**
- * Lifecycle of a student (and of any account):
- *
- *   ACTIVE     — enrolled, normal academic operations continue.
- *   SUSPENDED  — temporarily barred from normal academic operations, but the
- *                student, their marks, attendance and history are kept.
- *   DISMISSED  — permanently removed from the current rolls. The record is
- *                never deleted: historical marks, attendance, report cards
- *                and the parent relationship are all preserved.
- *   PENDING    — registered but not yet confirmed (accounts).
- */
 enum AccountStatus {
   ACTIVE
   SUSPENDED
@@ -74,13 +63,9 @@ enum AvailabilityStatus {
 
 enum WeekDay {
   MONDAY
-
   TUESDAY
-
   WEDNESDAY
-
   THURSDAY
-
   FRIDAY
 }
 
@@ -100,6 +85,11 @@ enum AIMessageRole {
   USER
   ASSISTANT
 }
+
+
+// ============================================================
+// USER
+// ============================================================
 
 model User {
   id           String        @id @default(cuid())
@@ -125,9 +115,10 @@ model User {
   publishedResults    ResultPublication[]
   publishedSequences  SequencePublication[]
   publishedTimetables TimetablePublication[]
-  forumPosts          ForumPost[]            @relation("ForumPostAuthor")
-  forumComments       ForumComment[]         @relation("ForumCommentAuthor")
-  forumReactions      ForumReaction[]        @relation("ForumReactionUser")
+
+  forumPosts     ForumPost[]     @relation("ForumPostAuthor")
+  forumComments  ForumComment[]  @relation("ForumCommentAuthor")
+  forumReactions ForumReaction[] @relation("ForumReactionUser")
 
   administrator Administrator?
   teacher       Teacher?
@@ -138,6 +129,11 @@ model User {
   @@index([status])
 }
 
+
+// ============================================================
+// ADMINISTRATOR
+// ============================================================
+
 model Administrator {
   id String @id @default(cuid())
 
@@ -146,6 +142,11 @@ model Administrator {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+
+// ============================================================
+// TEACHER
+// ============================================================
 
 model Teacher {
   id String @id @default(cuid())
@@ -177,6 +178,11 @@ model Teacher {
   @@index([email])
 }
 
+
+// ============================================================
+// PARENT
+// ============================================================
+
 model Parent {
   id String @id @default(cuid())
 
@@ -203,28 +209,66 @@ model Parent {
   @@index([email])
 }
 
+
+// ============================================================
+// SECTION
+// ============================================================
+
 model Section {
   id String @id @default(cuid())
 
-  name               SectionType         @unique
+  name SectionType @unique
+
   classrooms         Classroom[]
   teacherAssignments TeacherAssignment[]
 }
+
+
+// ============================================================
+// ACADEMIC YEAR
+// ============================================================
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  startDate DateTime
+  endDate   DateTime
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  terms       Term[]
+  timetables  Timetable[]
+  reportCards ReportCard[]
+  classrooms  Classroom[]
+  students    Student[]
+
+  @@index([isActive])
+}
+
+
+// ============================================================
+// CLASSROOM
+// ============================================================
 
 model Classroom {
   id String @id @default(cuid())
 
   name String
 
-  sectionId String
-
+  sectionId      String
   academicYearId String
 
-  section      Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
   assignments           TeacherAssignment[]
+  classroomSubjects     ClassroomSubject[]
   timetable             Timetable[]
+  reportCards           ReportCard[]
   students              Student[]
   resultPublications    ResultPublication[]
   sequencePublications  SequencePublication[]
@@ -235,6 +279,11 @@ model Classroom {
   @@index([academicYearId])
   @@index([name])
 }
+
+
+// ============================================================
+// STUDENT
+// ============================================================
 
 model Student {
   id String @id @default(cuid())
@@ -249,49 +298,67 @@ model Student {
 
   status AccountStatus @default(ACTIVE)
 
+  // Identifies the academic year in which this student
+  // is currently recorded/enrolled.
+  academicYearId String
+
+  // Identifies the classroom of the student.
+  classroomId String
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  classroom Classroom @relation(fields: [classroomId], references: [id])
+
   attendances Attendance[]
   timetable   Timetable[]
   marks       Mark[]
   reportCards ReportCard[]
 
-  classroomId String
-  classroom   Classroom @relation(fields: [classroomId], references: [id])
-
   parentId String?
-  parent   Parent? @relation(fields: [parentId], references: [id])
+
+  parent Parent? @relation(fields: [parentId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([academicYearId])
   @@index([classroomId])
   @@index([parentId])
   @@index([status])
   @@index([lastName, firstName])
 }
 
+
+// ============================================================
+// SUBJECT
+// ============================================================
+
 model Subject {
   id String @id @default(cuid())
 
   name String
-
   code String @unique
 
   coefficient Int
 
   attendances Attendance[]
+  marks       Mark[]
 
-  marks Mark[]
+  assignments        TeacherAssignment[]
+  timetables         Timetable[]
+  reportCardSubjects ReportCardSubject[]
+  classroomSubjects  ClassroomSubject[]
 
   createdAt DateTime @default(now())
-
   updatedAt DateTime @updatedAt
-
-  assignments TeacherAssignment[]
-
-  timetables Timetable[]
 
   @@index([name])
 }
+
+
+// ============================================================
+// TEACHER ASSIGNMENT
+// ============================================================
 
 model TeacherAssignment {
   id String @id @default(cuid())
@@ -301,10 +368,13 @@ model TeacherAssignment {
   classroomId String
   subjectId   String
 
-  teacher   Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  section   Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
   classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
-  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -314,23 +384,10 @@ model TeacherAssignment {
   @@index([subjectId])
 }
 
-model AcademicYear {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  startDate DateTime
-  endDate   DateTime
 
-  isActive Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  terms      Term[]
-  timetables Timetable[]
-  classrooms Classroom[]
-
-  @@index([isActive])
-}
+// ============================================================
+// TERM
+// ============================================================
 
 model Term {
   id String @id @default(cuid())
@@ -342,39 +399,51 @@ model Term {
 
   academicYearId String
 
-  reportCards           ReportCard[]
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+
   sequences             Sequence[]
+  marks                 Mark[]
+  reportCards           ReportCard[]
   timetables            Timetable[]
   resultPublications    ResultPublication[]
   timetablePublications TimetablePublication[]
 
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-
+  @@unique([academicYearId, order])
   @@index([academicYearId])
   @@index([isCurrent])
 }
 
+
+// ============================================================
+// SEQUENCE
+// ============================================================
+
 model Sequence {
   id String @id @default(cuid())
 
-  name String
-
+  name  String
   order Int
-
-  attendances Attendance[]
-
-  marks Mark[]
-
-  sequencePublications SequencePublication[]
 
   termId String
 
-  term Term @relation(fields: [termId], references: [id])
+  term Term @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  attendances Attendance[]
+  marks       Mark[]
+
+  sequencePublications SequencePublication[]
 
   createdAt DateTime @default(now())
 
+  @@unique([termId, name])
+  @@unique([termId, order])
   @@index([termId])
 }
+
+
+// ============================================================
+// ATTENDANCE
+// ============================================================
 
 model Attendance {
   id String @id @default(cuid())
@@ -406,55 +475,69 @@ model Attendance {
   @@index([status])
 }
 
+
+// ============================================================
+// MARK
+// ============================================================
+//
+// One Mark = one student's score for one subject
+// in one term and one sequence.
+//
+// Example:
+// Student A + Mathematics + First Term + First Sequence = 15
+// Student A + Mathematics + First Term + Second Sequence = 17
+//
+// The term average is calculated from the sequence marks.
+// ============================================================
+
 model Mark {
   id String @id @default(cuid())
 
   studentId  String
   subjectId  String
   teacherId  String
+  termId     String
   sequenceId String
 
-  ca1 Float
+  score Float
 
-  ca2 Float
-
-  exam Float
-
-  average Float
-
-  grade String?
-
-  remark String?
-
-  student Student @relation(fields: [studentId], references: [id])
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   subject Subject @relation(fields: [subjectId], references: [id])
 
   teacher Teacher @relation(fields: [teacherId], references: [id])
 
-  sequence Sequence @relation(fields: [sequenceId], references: [id])
+  term Term @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  sequence Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-
   updatedAt DateTime @updatedAt
 
-  @@unique([studentId, subjectId, sequenceId])
+  @@unique([studentId, subjectId, termId, sequenceId])
   @@index([studentId])
-  @@index([sequenceId])
   @@index([subjectId])
   @@index([teacherId])
+  @@index([termId])
+  @@index([sequenceId])
 }
+
+// ============================================================
+// REPORT CARD
+// ============================================================
 
 model ReportCard {
   id String @id @default(cuid())
 
-  studentId String
+  studentId      String
+  classroomId    String
+  termId         String
+  academicYearId String
 
-  termId String
-
+  total   Float
   average Float
 
-  rank Int?
+  position Int?
 
   decision String?
 
@@ -462,15 +545,48 @@ model ReportCard {
 
   pdfUrl String?
 
+  generatedAt DateTime @default(now())
+
   student Student @relation(fields: [studentId], references: [id])
+
+  classroom Classroom @relation(fields: [classroomId], references: [id])
 
   term Term @relation(fields: [termId], references: [id])
 
-  createdAt DateTime @default(now())
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  subjects ReportCardSubject[]
 
   @@unique([studentId, termId])
-  @@index([termId])
 }
+
+
+// ============================================================
+// REPORT CARD SUBJECT
+// ============================================================
+
+model ReportCardSubject {
+  id String @id @default(cuid())
+
+  reportCardId String
+  subjectId    String
+
+  // Final subject mark for the term.
+  // Usually calculated from the sequence marks.
+  mark Float
+
+  grade  String?
+  remark String?
+
+  reportCard ReportCard @relation(fields: [reportCardId], references: [id], onDelete: Cascade)
+
+  subject Subject @relation(fields: [subjectId], references: [id])
+}
+
+
+// ============================================================
+// RESULT PUBLICATION
+// ============================================================
 
 model ResultPublication {
   id String @id @default(cuid())
@@ -488,15 +604,22 @@ model ResultPublication {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  term        Term      @relation(fields: [termId], references: [id], onDelete: Cascade)
-  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
-  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+  term Term @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+
+  publishedBy User? @relation(fields: [publishedById], references: [id], onDelete: SetNull)
 
   @@unique([termId, classroomId])
   @@index([termId])
   @@index([classroomId])
   @@index([status])
 }
+
+
+// ============================================================
+// SEQUENCE PUBLICATION
+// ============================================================
 
 model SequencePublication {
   id String @id @default(cuid())
@@ -514,15 +637,22 @@ model SequencePublication {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sequence    Sequence  @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
-  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
-  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+  sequence Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+
+  publishedBy User? @relation(fields: [publishedById], references: [id], onDelete: SetNull)
 
   @@unique([sequenceId, classroomId])
   @@index([sequenceId])
   @@index([classroomId])
   @@index([status])
 }
+
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
 
 model Notification {
   id String @id @default(cuid())
@@ -557,6 +687,11 @@ model Notification {
   @@index([type])
 }
 
+
+// ============================================================
+// OLD-STYLE STAFF/PARENT FORUM
+// ============================================================
+
 model Forum {
   id String @id @default(cuid())
 
@@ -573,8 +708,7 @@ model ForumMessage {
   message String
 
   forumId String
-
-  userId String
+  userId  String
 
   forum Forum @relation(fields: [forumId], references: [id], onDelete: Cascade)
 
@@ -585,11 +719,15 @@ model ForumMessage {
   @@index([forumId])
 }
 
+
+// ============================================================
+// AI RECOMMENDATION
+// ============================================================
+
 model AIRecommendation {
   id String @id @default(cuid())
 
-  title String
-
+  title   String
   content String
 
   userId String
@@ -598,6 +736,11 @@ model AIRecommendation {
 
   createdAt DateTime @default(now())
 }
+
+
+// ============================================================
+// AI CONVERSATION
+// ============================================================
 
 model AIConversation {
   id String @id @default(cuid())
@@ -617,13 +760,17 @@ model AIConversation {
   @@index([updatedAt])
 }
 
+
+// ============================================================
+// AI MESSAGE
+// ============================================================
+
 model AIMessage {
   id String @id @default(cuid())
 
   conversationId String
 
-  role AIMessageRole
-
+  role    AIMessageRole
   content String
 
   conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -633,6 +780,11 @@ model AIMessage {
   @@index([conversationId])
   @@index([createdAt])
 }
+
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
 
 model AuditLog {
   id String @id @default(cuid())
@@ -658,6 +810,11 @@ model AuditLog {
   @@index([action])
 }
 
+
+// ============================================================
+// FORUM CATEGORY
+// ============================================================
+
 model ForumCategory {
   id String @id @default(cuid())
 
@@ -680,6 +837,11 @@ model ForumCategory {
   @@index([order])
 }
 
+
+// ============================================================
+// FORUM POST
+// ============================================================
+
 model ForumPost {
   id String @id @default(cuid())
 
@@ -695,8 +857,10 @@ model ForumPost {
 
   views Int @default(0)
 
-  category  ForumCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  author    User            @relation("ForumPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  category ForumCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  author User @relation("ForumPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
   comments  ForumComment[]
   reactions ForumReaction[]
 
@@ -709,6 +873,11 @@ model ForumPost {
   @@index([isPinned])
 }
 
+
+// ============================================================
+// FORUM COMMENT
+// ============================================================
+
 model ForumComment {
   id String @id @default(cuid())
 
@@ -719,8 +888,9 @@ model ForumComment {
 
   isDeleted Boolean @default(false)
 
-  post   ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  author User      @relation("ForumCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  post ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  author User @relation("ForumCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -728,22 +898,33 @@ model ForumComment {
   @@index([authorId])
 }
 
+
+// ============================================================
+// FORUM REACTION
+// ============================================================
+
 model ForumReaction {
   id String @id @default(cuid())
-
-  type String @default("LIKE")
 
   postId String
   userId String
 
+  type String
+
   post ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User      @relation("ForumReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation("ForumReactionUser", fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
-  @@unique([postId, userId, type])
+  @@unique([postId, userId])
   @@index([postId])
+  @@index([userId])
 }
+
+// ============================================================
+// TIMETABLE
+// ============================================================
 
 model Timetable {
   id String @id @default(cuid())
@@ -761,25 +942,30 @@ model Timetable {
 
   room String?
 
-  classroom    Classroom    @relation(fields: [classroomId], references: [id])
-  subject      Subject      @relation(fields: [subjectId], references: [id])
-  teacher      Teacher      @relation(fields: [teacherId], references: [id])
+  classroom Classroom @relation(fields: [classroomId], references: [id])
+
+  subject Subject @relation(fields: [subjectId], references: [id])
+
+  teacher Teacher @relation(fields: [teacherId], references: [id])
+
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-  term         Term         @relation(fields: [termId], references: [id])
+
+  term Term @relation(fields: [termId], references: [id])
 
   studentId String?
-  student   Student? @relation(fields: [studentId], references: [id])
+
+  student Student? @relation(fields: [studentId], references: [id])
 
   @@index([classroomId, day])
   @@index([teacherId, day])
   @@index([termId])
 }
 
-/**
- * Publication state of a class timetable for one term, following the same
- * pattern as ResultPublication / SequencePublication. Teachers and parents
- * only see timetable entries of classes whose timetable is PUBLISHED.
- */
+
+// ============================================================
+// TIMETABLE PUBLICATION
+// ============================================================
+
 model TimetablePublication {
   id String @id @default(cuid())
 
@@ -796,15 +982,22 @@ model TimetablePublication {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  term        Term      @relation(fields: [termId], references: [id], onDelete: Cascade)
-  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
-  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+  term Term @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+
+  publishedBy User? @relation(fields: [publishedById], references: [id], onDelete: SetNull)
 
   @@unique([termId, classroomId])
   @@index([termId])
   @@index([classroomId])
   @@index([status])
 }
+
+
+// ============================================================
+// TEACHER AVAILABILITY
+// ============================================================
 
 model TeacherAvailability {
   id String @id @default(cuid())
@@ -826,4 +1019,26 @@ model TeacherAvailability {
   @@index([teacherId])
   @@index([day])
   @@index([status])
+}
+
+
+// ============================================================
+// CLASSROOM SUBJECT
+// ============================================================
+
+model ClassroomSubject {
+  id String @id @default(cuid())
+
+  classroomId String
+  subjectId   String
+
+  classroom Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([classroomId, subjectId])
+  @@index([classroomId])
+  @@index([subjectId])
 }

@@ -306,14 +306,7 @@ export default function ForumBrowser({ portal }: { portal: "teacher" | "parent" 
   if (openPost) {
     return (
       <div>
-        <button
-          type="button"
-          onClick={() => setOpenPost(null)}
-          className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-purple-700 transition hover:text-purple-900 dark:text-purple-300 dark:hover:text-purple-100"
-        >
-          <ArrowLeft size={16} />
-          Back to the forum
-        </button>
+       
 
         {threadLoading ? (
           <div className="flex min-h-[200px] items-center justify-center">

@@ -1,8 +1,7 @@
 // This file configures Prisma CLI.
 
 import dotenv from "dotenv";
-import { defineConfig } from "prisma/config";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { defineConfig, env } from "prisma/config";
 
 // Load .env.local first
 dotenv.config({
@@ -21,10 +20,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
 
-  experimental: {
-    adapter: true,
+  datasource: {
+    url: env("DATABASE_URL"),
   },
-
-  engine: "js",
-  adapter: async () => new PrismaPg({ connectionString: process.env.DATABASE_URL ?? "" }),
 });

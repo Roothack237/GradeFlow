@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-
 import {
   CalendarDays,
   CheckCircle2,
@@ -20,6 +19,10 @@ import {
 import AdminSidebar from "@/components/admin/SideBar";
 import AdminNavbar from "@/components/admin/NavBar";
 
+// =========================================================
+// TYPES
+// =========================================================
+
 type WeekDay =
   | "MONDAY"
   | "TUESDAY"
@@ -27,7 +30,10 @@ type WeekDay =
   | "THURSDAY"
   | "FRIDAY";
 
-type AvailabilityStatus = "PENDING" | "APPROVED" | "REJECTED";
+type AvailabilityStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
 
 type AcademicYear = {
   id: string;
@@ -41,6 +47,11 @@ type Term = {
   id: string;
   name: string;
   order: number;
+  academicYearId?: string;
+  academicYear?: {
+    id: string;
+    name: string;
+  };
 };
 
 type AvailabilitySlot = {
@@ -134,6 +145,10 @@ type UnscheduledAssignment = {
   reason: string;
 };
 
+// =========================================================
+// CONSTANTS
+// =========================================================
+
 const DAYS: WeekDay[] = [
   "MONDAY",
   "TUESDAY",
@@ -153,41 +168,50 @@ const TIME_SLOTS = [
   "15:00",
 ];
 
+// =========================================================
+// HELPERS
+// =========================================================
+
 function formatDay(day: string) {
   return day.charAt(0) + day.slice(1).toLowerCase();
 }
 
-function getStatusStyle(
-  status: AvailabilitySummary["status"] | AvailabilityStatus
-) {
+function getStatusStyle(status: string) {
   switch (status) {
     case "READY":
     case "APPROVED":
+    case "PUBLISHED":
       return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
 
     case "PENDING":
+    case "DRAFT":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
 
     case "REJECTED":
+    case "UNPUBLISHED":
       return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+
+    case "MISSING":
+      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
 
     default:
       return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
   }
 }
 
-function getStatusIcon(
-  status: AvailabilitySummary["status"] | AvailabilityStatus
-) {
+function getStatusIcon(status: string) {
   switch (status) {
     case "READY":
     case "APPROVED":
+    case "PUBLISHED":
       return <CheckCircle2 size={15} />;
 
     case "PENDING":
+    case "DRAFT":
       return <Clock3 size={15} />;
 
     case "REJECTED":
+    case "UNPUBLISHED":
       return <XCircle size={15} />;
 
     default:
@@ -195,37 +219,19 @@ function getStatusIcon(
   }
 }
 
-async function readApiResponse(response: Response) {
-  const contentType = response.headers.get("content-type") || "";
-  const responseText = await response.text();
-
-  if (!responseText.trim()) {
-    throw new Error(
-      `The server returned an empty response (${response.status}).`
-    );
-  }
-
-  if (!contentType.includes("application/json")) {
-    console.error("NON-JSON API RESPONSE:", responseText);
-
-    throw new Error(
-      `The server returned a non-JSON response (${response.status}).`
-    );
-  }
-
-  try {
-    return JSON.parse(responseText);
-  } catch {
-    console.error("INVALID API RESPONSE:", responseText);
-
-    throw new Error(
-      `The server returned invalid JSON (${response.status}).`
-    );
-  }
-}
+// =========================================================
+// PAGE
+// =========================================================
 
 export default function TimetablePage() {
-  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  // -------------------------------------------------------
+  // DATA
+  // -------------------------------------------------------
+
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>(
+    []
+  );
+
   const [availabilitySummary, setAvailabilitySummary] = useState<
     AvailabilitySummary[]
   >([]);
@@ -241,20 +247,30 @@ export default function TimetablePage() {
 
   const [timetable, setTimetable] = useState<TimetableEntry[]>([]);
 
-  const [publications, setPublications] = useState<Publication[]>([]);
+  const [publications, setPublications] = useState<Publication[]>(
+    []
+  );
 
-  const [rooms, setRooms] = useState<Record<string, string>>({});
-
-  const [publishing, setPublishing] = useState<string | null>(null);
   const [unscheduled, setUnscheduled] = useState<
     UnscheduledAssignment[]
   >([]);
 
+  // -------------------------------------------------------
+  // FILTERS
+  // -------------------------------------------------------
+
   const [academicYearId, setAcademicYearId] = useState("");
   const [termId, setTermId] = useState("");
 
+  // -------------------------------------------------------
+  // UI STATE
+  // -------------------------------------------------------
+
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState<string | null>(
+    null
+  );
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -262,97 +278,214 @@ export default function TimetablePage() {
   const [selectedTeacher, setSelectedTeacher] =
     useState<AvailabilitySummary | null>(null);
 
-  const currentYear = academicYears.find(
-    (year) => year.id === academicYearId
-  );
+  // =========================================================
+  // API RESPONSE HELPER
+  // =========================================================
 
-  async function publishTimetable(
-    classroomId: string,
-    action: "PUBLISH" | "UNPUBLISH"
-  ) {
-    if (!termId) {
-      setError("Select a term first.");
-      return;
+  async function readApiResponse(response: Response) {
+    const contentType =
+      response.headers.get("content-type") || "";
+
+    const text = await response.text();
+
+    if (!text.trim()) {
+      return {
+        data: {},
+        raw: "",
+      };
     }
 
-    try {
-      setPublishing(classroomId);
-
-      const response = await fetch("/api/admin/timetable/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          termId,
-          classroomId,
-          action,
-          room: classroomId === "all" ? null : rooms[classroomId]?.trim() || null,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to update the publication.");
+    if (contentType.includes("application/json")) {
+      try {
+        return {
+          data: JSON.parse(text),
+          raw: text,
+        };
+      } catch {
+        return {
+          data: {},
+          raw: text,
+        };
       }
-
-      setSuccess(
-        action === "PUBLISH"
-          ? "Timetable published — teachers and parents can now see it."
-          : "Timetable unpublished — it is now hidden from teachers and parents."
-      );
-
-      await loadTimetableData();
-    } catch (err) {
-      console.error("PUBLISH TIMETABLE ERROR:", err);
-
-      setError(
-        err instanceof Error ? err.message : "Failed to update the publication."
-      );
-    } finally {
-      setPublishing(null);
     }
+
+    return {
+      data: {},
+      raw: text,
+    };
   }
 
-  async function loadTimetableData() {
+  // =========================================================
+  // LOAD ACADEMIC YEARS
+  // =========================================================
+
+  async function loadAcademicYears() {
+    const response = await fetch(
+      "/api/admin/academic-years",
+      {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      }
+    );
+
+    const { data, raw } = await readApiResponse(response);
+
+    if (!response.ok) {
+      throw new Error(
+        data?.message ||
+          data?.error ||
+          raw ||
+          `Failed to load academic years (${response.status})`
+      );
+    }
+
+    let years: AcademicYear[] = [];
+
+    if (Array.isArray(data?.academicYears)) {
+      years = data.academicYears;
+    } else if (Array.isArray(data)) {
+      years = data;
+    }
+
+    // -------------------------------------------------------
+    // If academic years do not contain terms, load terms
+    // separately.
+    // -------------------------------------------------------
+
+    const needsTerms = years.some(
+      (year) =>
+        !Array.isArray(year.terms) ||
+        year.terms.length === 0
+    );
+
+    if (needsTerms) {
+      try {
+        const termsResponse = await fetch(
+          "/api/admin/terms",
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          }
+        );
+
+        const {
+          data: termsData,
+        } = await readApiResponse(termsResponse);
+
+        if (termsResponse.ok && Array.isArray(termsData?.terms)) {
+          const allTerms: Term[] = termsData.terms;
+
+          years = years.map((year) => ({
+            ...year,
+            terms: allTerms
+              .filter(
+                (term) =>
+                  term.academicYearId === year.id ||
+                  term.academicYear?.id === year.id
+              )
+              .sort(
+                (a, b) =>
+                  Number(a.order) - Number(b.order)
+              ),
+          }));
+        }
+      } catch (termError) {
+        console.error(
+          "FAILED TO LOAD TERMS:",
+          termError
+        );
+      }
+    }
+
+    console.log("ACADEMIC YEARS:", years);
+
+    setAcademicYears(years);
+
+    return years;
+  }
+
+  // =========================================================
+  // LOAD TIMETABLE
+  // =========================================================
+
+  async function loadTimetableData(
+    selectedAcademicYearId = academicYearId,
+    selectedTermId = termId
+  ) {
     try {
+      // -----------------------------------------------------
+      // NEVER CALL THE TIMETABLE API WITHOUT BOTH FILTERS
+      // -----------------------------------------------------
+
+      if (
+        !selectedAcademicYearId ||
+        !selectedTermId
+      ) {
+        console.log(
+          "Skipping timetable load because year or term is missing."
+        );
+
+        return;
+      }
+
       setLoading(true);
       setError("");
 
       const query = new URLSearchParams();
 
-      if (academicYearId) {
-        query.set("academicYearId", academicYearId);
-      }
-
-      if (termId) {
-        query.set("termId", termId);
-      }
-
-      const response = await fetch(
-        `/api/admin/timetable?${query.toString()}`,
-        {
-          method: "GET",
-          credentials: "include",
-          cache: "no-store",
-        }
+      query.set(
+        "academicYearId",
+        selectedAcademicYearId
       );
 
-      const data = await readApiResponse(response);
+      query.set("termId", selectedTermId);
 
-     if (!response.ok) {
+      const url = `/api/admin/timetable?${query.toString()}`;
+
+      console.log("TIMETABLE REQUEST:", url);
+
+      const response = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const { data, raw } =
+        await readApiResponse(response);
+
+      if (!response.ok) {
+        console.error(
+          "TIMETABLE API ERROR:",
+          response.status,
+          data,
+          raw
+        );
+
         throw new Error(
           data?.message ||
             data?.error ||
-            `Failed to load timetable data (${response.status})`
+            (raw
+              ? raw.slice(0, 300)
+              : `Failed to load timetable data (${response.status})`)
         );
       }
 
-      setAcademicYears(data?.academicYears ?? []);
-      setAvailabilitySummary(data?.availabilitySummary ?? []);
+      // -----------------------------------------------------
+      // Update timetable information
+      // -----------------------------------------------------
+
+      setAvailabilitySummary(
+        Array.isArray(data?.availabilitySummary)
+          ? data.availabilitySummary
+          : []
+      );
 
       setAvailabilityCounts(
         data?.availabilityCounts ?? {
-          totalTeachers: data?.availabilitySummary?.length ?? 0,
+          totalTeachers:
+            data?.availabilitySummary?.length ?? 0,
           missing: 0,
           pending: 0,
           ready: 0,
@@ -360,22 +493,44 @@ export default function TimetablePage() {
         }
       );
 
-      setTimetable(data?.timetable ?? []);
+      setTimetable(
+        Array.isArray(data?.timetable)
+          ? data.timetable
+          : []
+      );
 
-      setPublications(data?.publications ?? []);
-      setUnscheduled(data?.unscheduled ?? []);
+      setPublications(
+        Array.isArray(data?.publications)
+          ? data.publications
+          : []
+      );
 
-      if (!academicYearId && data?.academicYears?.length) {
-        const firstYear = data.academicYears[0];
+      setUnscheduled(
+        Array.isArray(data?.unscheduled)
+          ? data.unscheduled
+          : []
+      );
 
-        setAcademicYearId(firstYear.id);
+      // -----------------------------------------------------
+      // If API returns academic years, keep them
+      // -----------------------------------------------------
 
-        if (firstYear.terms?.length) {
-          setTermId(firstYear.terms[0].id);
-        }
+      if (
+        Array.isArray(data?.academicYears) &&
+        data.academicYears.length > 0
+      ) {
+        setAcademicYears(data.academicYears);
       }
+
+      console.log(
+        "TIMETABLE DATA LOADED:",
+        data
+      );
     } catch (err) {
-      console.error("TIMETABLE LOAD ERROR:", err);
+      console.error(
+        "TIMETABLE LOAD ERROR:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -387,40 +542,185 @@ export default function TimetablePage() {
     }
   }
 
+  // =========================================================
+  // INITIAL LOAD
+  // =========================================================
+
   useEffect(() => {
-    loadTimetableData();
+    let cancelled = false;
+
+    async function initialize() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const years =
+          await loadAcademicYears();
+
+        if (cancelled) return;
+
+        if (!years.length) {
+          setError(
+            "No academic years were found."
+          );
+          setLoading(false);
+          return;
+        }
+
+        // ---------------------------------------------------
+        // Select first academic year
+        // ---------------------------------------------------
+
+        const firstYear = years[0];
+
+        const firstTerm =
+          firstYear.terms?.length
+            ? firstYear.terms[0]
+            : null;
+
+        console.log(
+          "INITIAL ACADEMIC YEAR:",
+          firstYear
+        );
+
+        console.log(
+          "INITIAL TERM:",
+          firstTerm
+        );
+
+        setAcademicYearId(firstYear.id);
+
+        if (firstTerm) {
+          setTermId(firstTerm.id);
+        } else {
+          setTermId("");
+
+          setError(
+            `No terms were found for ${firstYear.name}.`
+          );
+        }
+      } catch (err) {
+        console.error(
+          "INITIAL TIMETABLE LOAD ERROR:",
+          err
+        );
+
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to initialize timetable"
+          );
+
+          setLoading(false);
+        }
+      }
+    }
+
+    initialize();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // =========================================================
+  // LOAD TIMETABLE WHEN YEAR OR TERM CHANGES
+  // =========================================================
+
   useEffect(() => {
-    if (!academicYearId) return;
-
-    const year = academicYears.find(
-      (item) => item.id === academicYearId
-    );
-
-    if (!year?.terms?.length) {
-      setTermId("");
+    if (!academicYearId || !termId) {
       return;
     }
 
-    const termExists = year.terms.some(
-      (term) => term.id === termId
+    console.log(
+      "LOADING TIMETABLE FOR:",
+      {
+        academicYearId,
+        termId,
+      }
     );
 
-    if (!termExists) {
-      setTermId(year.terms[0].id);
-    }
-  }, [academicYearId, academicYears, termId]);
-
-  useEffect(() => {
-    if (!academicYearId || !termId) return;
-
-    loadTimetableData();
+    loadTimetableData(
+      academicYearId,
+      termId
+    );
   }, [academicYearId, termId]);
+
+  // =========================================================
+  // ACADEMIC YEAR CHANGE
+  // =========================================================
+
+  function handleAcademicYearChange(
+    yearId: string
+  ) {
+    console.log(
+      "SELECTED ACADEMIC YEAR:",
+      yearId
+    );
+
+    const selectedYear =
+      academicYears.find(
+        (year) => year.id === yearId
+      );
+
+    setAcademicYearId(yearId);
+
+    // -------------------------------------------------------
+    // Automatically select first term of selected year
+    // -------------------------------------------------------
+
+    if (
+      selectedYear &&
+      selectedYear.terms &&
+      selectedYear.terms.length > 0
+    ) {
+      const firstTerm =
+        [...selectedYear.terms].sort(
+          (a, b) =>
+            Number(a.order) -
+            Number(b.order)
+        )[0];
+
+      console.log(
+        "AUTO SELECTED TERM:",
+        firstTerm
+      );
+
+      setTermId(firstTerm.id);
+    } else {
+      console.log(
+        "NO TERMS FOUND FOR SELECTED YEAR"
+      );
+
+      setTermId("");
+    }
+  }
+
+  // =========================================================
+  // TERM CHANGE
+  // =========================================================
+
+  function handleTermChange(
+    selectedTermId: string
+  ) {
+    console.log(
+      "SELECTED TERM:",
+      selectedTermId
+    );
+
+    setTermId(selectedTermId);
+  }
+
+  // =========================================================
+  // GENERATE TIMETABLE
+  // =========================================================
 
   async function generateTimetable() {
     if (!academicYearId || !termId) {
-      setError("Please select an academic year and term.");
+      setError(
+        "Please select an academic year and term first."
+      );
       return;
     }
 
@@ -428,42 +728,49 @@ export default function TimetablePage() {
       setGenerating(true);
       setError("");
       setSuccess("");
-      setUnscheduled([]);
 
-      const response = await fetch("/api/admin/timetable", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          academicYearId,
-          termId,
-        }),
-      });
+      const response = await fetch(
+        "/api/admin/timetable",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            academicYearId,
+            termId,
+          }),
+        }
+      );
 
-      const data = await readApiResponse(response);
+      const { data, raw } =
+        await readApiResponse(response);
 
       if (!response.ok) {
         throw new Error(
-          data?.error ||
-            data?.message ||
+          data?.message ||
+            data?.error ||
+            raw ||
             `Failed to generate timetable (${response.status})`
         );
       }
 
       setSuccess(
         data?.message ||
-          `Timetable generated successfully. ${
-            data?.createdCount ?? 0
-          } periods created.`
+          "Timetable generated successfully."
       );
 
-      setUnscheduled(data?.unscheduled ?? []);
-
-      await loadTimetableData();
+      await loadTimetableData(
+        academicYearId,
+        termId
+      );
     } catch (err) {
-      console.error("TIMETABLE GENERATION ERROR:", err);
+      console.error(
+        "GENERATE TIMETABLE ERROR:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -474,6 +781,91 @@ export default function TimetablePage() {
       setGenerating(false);
     }
   }
+
+  // =========================================================
+  // PUBLISH / UNPUBLISH
+  // =========================================================
+
+  async function publishTimetable(
+    classroomId: string,
+    action: "publish" | "unpublish"
+  ) {
+    if (!termId) {
+      setError(
+        "Please select a term first."
+      );
+      return;
+    }
+
+    try {
+      setPublishing(
+        `${classroomId}-${action}`
+      );
+
+      setError("");
+      setSuccess("");
+
+      const response = await fetch(
+        "/api/admin/timetable/publish",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            termId,
+            classroomId,
+            action,
+          }),
+        }
+      );
+
+      const { data, raw } =
+        await readApiResponse(response);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ||
+            data?.error ||
+            raw ||
+            `Failed to ${action} timetable`
+        );
+      }
+
+      setSuccess(
+        data?.message ||
+          `Timetable ${
+            action === "publish"
+              ? "published"
+              : "unpublished"
+          } successfully.`
+      );
+
+      await loadTimetableData(
+        academicYearId,
+        termId
+      );
+    } catch (err) {
+      console.error(
+        "PUBLISH ERROR:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : `Failed to ${action} timetable`
+      );
+    } finally {
+      setPublishing(null);
+    }
+  }
+
+  // =========================================================
+  // HELPERS
+  // =========================================================
 
   function getTimetableEntry(
     day: string,
@@ -486,54 +878,122 @@ export default function TimetablePage() {
     );
   }
 
+  const currentYear =
+    academicYears.find(
+      (year) =>
+        year.id === academicYearId
+    );
+
+  const currentTerm =
+    currentYear?.terms?.find(
+      (term) => term.id === termId
+    );
+
+  // Group publications by classroom
+  const publicationGroups =
+    publications.reduce(
+      (
+        groups,
+        publication
+      ) => {
+        if (
+          !groups[publication.classroomId]
+        ) {
+          groups[
+            publication.classroomId
+          ] = [];
+        }
+
+        groups[
+          publication.classroomId
+        ].push(publication);
+
+        return groups;
+      },
+      {} as Record<
+        string,
+        Publication[]
+      >
+    );
+
+  // =========================================================
+  // RENDER
+  // =========================================================
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <AdminSidebar />
 
-      <div className="md:ml-64">
+      <div className="lg:ml-64">
         <AdminNavbar />
 
-        <main className="p-4 md:p-6 lg:p-8">
+        <main className="p-4 sm:p-6 lg:p-8">
+          {/* ================================================= */}
           {/* HEADER */}
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-                <CalendarDays size={24} />
-              </div>
+          {/* ================================================= */}
 
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  Timetable Management
-                </h1>
+          <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-purple-100 p-3 dark:bg-purple-900/30">
+                  <CalendarDays
+                    className="text-purple-600 dark:text-purple-400"
+                    size={26}
+                  />
+                </div>
 
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Manage teacher availability and generate the
-                  school timetable.
-                </p>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                    Timetable
+                  </h1>
+
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Manage teacher availability
+                    and generate school timetables.
+                  </p>
+                </div>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={loadTimetableData}
-                disabled={loading}
-                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                type="button"
+                onClick={() =>
+                  loadTimetableData(
+                    academicYearId,
+                    termId
+                  )
+                }
+                disabled={
+                  loading ||
+                  !academicYearId ||
+                  !termId
+                }
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
               >
                 <RefreshCw
                   size={17}
-                  className={loading ? "animate-spin" : ""}
+                  className={
+                    loading
+                      ? "animate-spin"
+                      : ""
+                  }
                 />
                 Refresh
               </button>
 
               <button
-                onClick={generateTimetable}
+                type="button"
+                onClick={
+                  generateTimetable
+                }
                 disabled={
                   generating ||
+                  loading ||
                   !academicYearId ||
                   !termId
                 }
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {generating ? (
                   <Loader2
@@ -551,20 +1011,19 @@ export default function TimetablePage() {
             </div>
           </div>
 
+          {/* ================================================= */}
           {/* ERROR */}
+          {/* ================================================= */}
+
           {error && (
-            <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400">
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
               <AlertCircle
                 size={20}
                 className="mt-0.5 shrink-0"
               />
 
-              <div>
-                <p className="font-semibold">
-                  Something went wrong
-                </p>
-
-                <p className="mt-1 text-sm">
+              <div className="flex-1">
+                <p className="font-medium">
                   {error}
                 </p>
 
@@ -573,565 +1032,704 @@ export default function TimetablePage() {
                   .includes("unauthorized") && (
                   <Link
                     href="/login"
-                    className="mt-2 inline-block text-sm font-semibold underline"
+                    className="mt-2 inline-block text-sm font-medium underline"
                   >
                     Sign in again
                   </Link>
                 )}
               </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setError("")
+                }
+                className="rounded-lg p-1 hover:bg-red-100 dark:hover:bg-red-900/30"
+              >
+                <XCircle size={18} />
+              </button>
             </div>
           )}
 
+          {/* ================================================= */}
           {/* SUCCESS */}
-          {success && (
-            <div className="mb-5 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-green-700 dark:border-green-900/50 dark:bg-green-900/20 dark:text-green-400">
-              <CheckCircle2
-                size={20}
-                className="mt-0.5 shrink-0"
-              />
+          {/* ================================================= */}
 
-              <p className="text-sm font-medium">
+          {success && (
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-green-700 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-400">
+              <CheckCircle2 size={20} />
+
+              <p className="flex-1 font-medium">
                 {success}
               </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSuccess("")
+                }
+              >
+                <XCircle size={18} />
+              </button>
             </div>
           )}
 
+          {/* ================================================= */}
           {/* FILTERS */}
-          <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* ================================================= */}
+
+          <section className="mb-8 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Timetable Filters
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Select the academic year and term
+                you want to manage.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              {/* Academic Year */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Academic Year
                 </label>
 
                 <select
                   value={academicYearId}
                   onChange={(e) =>
-                    setAcademicYearId(e.target.value)
+                    handleAcademicYearChange(
+                      e.target.value
+                    )
                   }
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  disabled={
+                    loading &&
+                    academicYears.length === 0
+                  }
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 >
                   <option value="">
-                    Select academic year
+                    {academicYears.length ===
+                    0
+                      ? "Loading academic years..."
+                      : "Select academic year"}
                   </option>
 
-                  {academicYears.map((year) => (
-                    <option
-                      key={year.id}
-                      value={year.id}
-                    >
-                      {year.name}
-                    </option>
-                  ))}
+                  {academicYears.map(
+                    (year) => (
+                      <option
+                        key={year.id}
+                        value={year.id}
+                      >
+                        {year.name}
+                      </option>
+                    )
+                  )}
                 </select>
               </div>
 
+              {/* Term */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Term
                 </label>
 
                 <select
                   value={termId}
                   onChange={(e) =>
-                    setTermId(e.target.value)
+                    handleTermChange(
+                      e.target.value
+                    )
                   }
-                  disabled={!currentYear}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  disabled={
+                    !academicYearId
+                  }
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 >
                   <option value="">
-                    Select term
+                    {!academicYearId
+                      ? "Select academic year first"
+                      : "Select term"}
                   </option>
 
-                  {currentYear?.terms?.map((term) => (
-                    <option
-                      key={term.id}
-                      value={term.id}
-                    >
-                      {term.name}
-                    </option>
-                  ))}
+                  {currentYear?.terms
+                    ?.slice()
+                    .sort(
+                      (a, b) =>
+                        Number(a.order) -
+                        Number(b.order)
+                    )
+                    .map((term) => (
+                      <option
+                        key={term.id}
+                        value={term.id}
+                      >
+                        {term.name}
+                      </option>
+                    ))}
                 </select>
+
+                {academicYearId &&
+                  currentYear &&
+                  (!currentYear.terms ||
+                    currentYear.terms
+                      .length === 0) && (
+                    <p className="mt-2 text-xs text-red-500">
+                      No terms found for{" "}
+                      {currentYear.name}.
+                    </p>
+                  )}
               </div>
             </div>
+
+            {/* Current selection */}
+            {academicYearId &&
+              termId && (
+                <div className="mt-5 rounded-xl bg-purple-50 px-4 py-3 dark:bg-purple-900/20">
+                  <p className="text-sm text-purple-700 dark:text-purple-300">
+                    <span className="font-semibold">
+                      Selected:
+                    </span>{" "}
+                    {currentYear?.name} —{" "}
+                    {currentTerm?.name}
+                  </p>
+                </div>
+              )}
           </section>
 
+          {/* ================================================= */}
+          {/* LOADING */}
+          {/* ================================================= */}
+
+          {loading &&
+            academicYearId &&
+            termId && (
+              <div className="mb-8 flex items-center justify-center rounded-2xl border border-gray-200 bg-white py-12 dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2
+                    size={30}
+                    className="animate-spin text-purple-600"
+                  />
+
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Loading timetable data...
+                  </p>
+                </div>
+              </div>
+            )}
+
+          {/* ================================================= */}
           {/* STATISTICS */}
-          <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* TEACHERS */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Teachers
-                  </p>
+          {/* ================================================= */}
 
-                  <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
-                    {availabilityCounts.totalTeachers}
-                  </p>
+          {!loading && (
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {/* Teachers */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Teachers
+                    </p>
+
+                    <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                      {
+                        availabilityCounts.totalTeachers
+                      }
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-blue-100 p-3 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                    <Users size={22} />
+                  </div>
                 </div>
+              </div>
 
-                <Users
-                  className="text-blue-500"
-                  size={25}
-                />
+              {/* Ready */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Ready
+                    </p>
+
+                    <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                      {
+                        availabilityCounts.ready
+                      }
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-green-100 p-3 text-green-600 dark:bg-green-900/30 dark:text-green-400">
+                    <CheckCircle2 size={22} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Pending */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Pending
+                    </p>
+
+                    <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                      {
+                        availabilityCounts.pending
+                      }
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-yellow-100 p-3 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400">
+                    <Clock3 size={22} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Missing */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Missing
+                    </p>
+
+                    <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                      {
+                        availabilityCounts.missing
+                      }
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-red-100 p-3 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                    <AlertCircle size={22} />
+                  </div>
+                </div>
               </div>
             </div>
+          )}
 
-            {/* READY */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Ready
-                  </p>
-
-                  <p className="mt-1 text-2xl font-bold text-green-600">
-                    {availabilityCounts.ready}
-                  </p>
-                </div>
-
-                <CheckCircle2
-                  className="text-green-500"
-                  size={25}
-                />
-              </div>
-            </div>
-
-            {/* PENDING */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Pending
-                  </p>
-
-                  <p className="mt-1 text-2xl font-bold text-yellow-600">
-                    {availabilityCounts.pending}
-                  </p>
-                </div>
-
-                <Clock3
-                  className="text-yellow-500"
-                  size={25}
-                />
-              </div>
-            </div>
-
-            {/* MISSING */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Missing
-                  </p>
-
-                  <p className="mt-1 text-2xl font-bold text-red-600">
-                    {availabilityCounts.missing}
-                  </p>
-                </div>
-
-                <XCircle
-                  className="text-red-500"
-                  size={25}
-                />
-              </div>
-            </div>
-          </section>
-
+          {/* ================================================= */}
           {/* TEACHER AVAILABILITY */}
-          <section className="mb-6 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Teacher Availability
-              </h2>
+          {/* ================================================= */}
 
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Click Inspect to view the availability submitted
-                by a teacher.
-              </p>
-            </div>
+          {!loading && (
+            <section className="mb-8 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="border-b border-gray-200 p-5 dark:border-gray-800">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Teacher Availability
+                </h2>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2
-                  size={28}
-                  className="animate-spin text-blue-600"
-                />
-              </div>
-            ) : availabilitySummary.length === 0 ? (
-              <div className="py-12 text-center">
-                <Users
-                  size={40}
-                  className="mx-auto mb-3 text-gray-400"
-                />
-
-                <p className="font-medium text-gray-700 dark:text-gray-300">
-                  No teacher availability found.
-                </p>
-
-                <p className="mt-1 text-sm text-gray-500">
-                  Teachers need to submit their availability
-                  first.
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Check teacher availability before
+                  generating the timetable.
                 </p>
               </div>
-            ) : (
+
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px]">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-400">
-                      <th className="px-5 py-3">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50 dark:bg-gray-950/50">
+                    <tr>
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         Teacher
                       </th>
 
-                      <th className="px-5 py-3">
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Code
+                      </th>
+
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         Assignments
                       </th>
 
-                      <th className="px-5 py-3">
-                        Approved
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Availability
                       </th>
 
-                      <th className="px-5 py-3">
-                        Pending
-                      </th>
-
-                      <th className="px-5 py-3">
-                        Rejected
-                      </th>
-
-                      <th className="px-5 py-3">
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         Status
                       </th>
 
-                      <th className="px-5 py-3 text-right">
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         Action
                       </th>
                     </tr>
                   </thead>
 
-                  <tbody>
-                    {availabilitySummary.map((teacher) => (
-                      <tr
-                        key={teacher.teacherId}
-                        className="border-b border-gray-100 last:border-0 dark:border-gray-800"
-                      >
-                        <td className="px-5 py-4">
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {teacher.teacherName}
-                          </p>
-
-                          <p className="text-xs text-gray-500">
-                            {teacher.teacherCode}
-                          </p>
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {availabilitySummary.length ===
+                    0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-5 py-10 text-center text-sm text-gray-500"
+                        >
+                          No teacher availability
+                          data found.
                         </td>
-
-                        <td className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
-                          {teacher.assignments?.length ?? 0}
-                        </td>
-
-                        <td className="px-5 py-4 text-sm font-medium text-green-600">
-                          {teacher.approvedCount}
-                        </td>
-
-                        <td className="px-5 py-4 text-sm font-medium text-yellow-600">
-                          {teacher.pendingCount}
-                        </td>
-
-                        <td className="px-5 py-4 text-sm font-medium text-red-600">
-                          {teacher.rejectedCount}
-                        </td>
-
-                        <td className="px-5 py-4">
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusStyle(
-                              teacher.status
-                            )}`}
-                          >
-                            {getStatusIcon(teacher.status)}
-                            {teacher.status}
-                          </span>
-                        </td>
-
-                        <td className="px-5 py-4 text-right">
-                          <button
-                            onClick={() =>
-                              setSelectedTeacher(teacher)
+                      </tr>
+                    ) : (
+                      availabilitySummary.map(
+                        (teacher) => (
+                          <tr
+                            key={
+                              teacher.teacherId
                             }
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                            className="hover:bg-gray-50 dark:hover:bg-gray-950/40"
                           >
-                            <Eye size={14} />
-                            Inspect
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+                            <td className="px-5 py-4">
+                              <p className="font-medium text-gray-900 dark:text-white">
+                                {
+                                  teacher.teacherName
+                                }
+                              </p>
 
-          {/* UNSCHEDULED */}
-          {unscheduled.length > 0 && (
-            <section className="mb-6 rounded-2xl border border-red-200 bg-white shadow-sm dark:border-red-900/40 dark:bg-gray-900">
-              <div className="border-b border-red-200 bg-red-50 px-5 py-4 dark:border-red-900/40 dark:bg-red-900/10">
-                <h2 className="font-bold text-red-700 dark:text-red-400">
-                  Unscheduled Assignments
-                </h2>
+                              <p className="text-xs text-gray-500">
+                                {teacher.email}
+                              </p>
+                            </td>
 
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                  Some assignments could not be placed in the
-                  timetable yet.
-                </p>
-              </div>
+                            <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                              {
+                                teacher.teacherCode
+                              }
+                            </td>
 
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[750px]">
-                  <thead>
-                    <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
-                      <th className="px-5 py-3">
-                        Teacher
-                      </th>
+                            <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                              {
+                                teacher
+                                  .assignments
+                                  ?.length ?? 0
+                              }
+                            </td>
 
-                      <th className="px-5 py-3">
-                        Subject
-                      </th>
+                            <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                              <div className="flex flex-wrap gap-2">
+                                <span className="rounded-lg bg-green-100 px-2 py-1 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                  {
+                                    teacher.approvedCount
+                                  }{" "}
+                                  approved
+                                </span>
 
-                      <th className="px-5 py-3">
-                        Class
-                      </th>
+                                <span className="rounded-lg bg-yellow-100 px-2 py-1 text-xs text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                                  {
+                                    teacher.pendingCount
+                                  }{" "}
+                                  pending
+                                </span>
+                              </div>
+                            </td>
 
-                      <th className="px-5 py-3">
-                        Reason
-                      </th>
-                    </tr>
-                  </thead>
+                            <td className="px-5 py-4">
+                              <span
+                                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${getStatusStyle(
+                                  teacher.status
+                                )}`}
+                              >
+                                {getStatusIcon(
+                                  teacher.status
+                                )}
 
-                  <tbody>
-                    {unscheduled.map((item, index) => (
-                      <tr
-                        key={`${item.teacherId}-${item.subjectCode}-${index}`}
-                        className="border-b border-gray-100 last:border-0 dark:border-gray-800"
-                      >
-                        <td className="px-5 py-4 text-sm font-medium text-gray-900 dark:text-white">
-                          {item.teacherName}
-                        </td>
+                                {teacher.status}
+                              </span>
+                            </td>
 
-                        <td className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
-                          {item.subjectName}
-                        </td>
-
-                        <td className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
-                          {item.classroomName}
-                        </td>
-
-                        <td className="px-5 py-4 text-sm text-red-600 dark:text-red-400">
-                          {item.reason}
-                        </td>
-                      </tr>
-                    ))}
+                            <td className="px-5 py-4">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSelectedTeacher(
+                                    teacher
+                                  )
+                                }
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                              >
+                                <Eye
+                                  size={15}
+                                />
+                                Inspect
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      )
+                    )}
                   </tbody>
                 </table>
               </div>
             </section>
           )}
 
-          {/* PUBLICATIONS */}
-          {termId && timetable.length > 0 && (
-            <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex flex-col gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="font-bold text-gray-900 dark:text-white">
-                    Publish Timetables
-                  </h2>
+          {/* ================================================= */}
+          {/* UNSCHEDULED ASSIGNMENTS */}
+          {/* ================================================= */}
 
-                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    A timetable is only visible to teachers and parents after
-                    it is published.
-                  </p>
+          {!loading &&
+            unscheduled.length > 0 && (
+              <section className="mb-8 rounded-2xl border border-red-200 bg-white shadow-sm dark:border-red-900/40 dark:bg-gray-900">
+                <div className="border-b border-red-200 p-5 dark:border-red-900/40">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-xl bg-red-100 p-2 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                      <AlertCircle
+                        size={20}
+                      />
+                    </div>
+
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                        Unscheduled Assignments
+                      </h2>
+
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        These assignments could not
+                        be placed in the timetable.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <button
-                  onClick={() => publishTimetable("all", "PUBLISH")}
-                  disabled={publishing === "all"}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {publishing === "all" ? (
-                    <Loader2 size={17} className="animate-spin" />
-                  ) : (
-                    <CheckCircle2 size={17} />
-                  )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50 dark:bg-gray-950/50">
+                      <tr>
+                        <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Teacher
+                        </th>
 
-                  Publish all classes
-                </button>
+                        <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Class
+                        </th>
+
+                        <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Subject
+                        </th>
+
+                        <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Reason
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                      {unscheduled.map(
+                        (item, index) => (
+                          <tr key={index}>
+                            <td className="px-5 py-4">
+                              <p className="font-medium text-gray-900 dark:text-white">
+                                {
+                                  item.teacherName
+                                }
+                              </p>
+
+                              <p className="text-xs text-gray-500">
+                                {
+                                  item.teacherCode
+                                }
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                              {
+                                item.classroomName
+                              }
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                              {
+                                item.subjectName
+                              }{" "}
+                              (
+                              {
+                                item.subjectCode
+                              }
+                              )
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-red-600 dark:text-red-400">
+                              {item.reason}
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
+          {/* ================================================= */}
+          {/* PUBLICATION */}
+          {/* ================================================= */}
+
+          {!loading && (
+            <section className="mb-8 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="border-b border-gray-200 p-5 dark:border-gray-800">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Publish Timetables
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Publish a generated timetable for
+                  each class.
+                </p>
               </div>
 
-              <div className="divide-y divide-gray-100 dark:divide-gray-800">
-                {Array.from(
-                  timetable
-                    .reduce((map, entry) => {
-                      const current = map.get(entry.classroom.id);
+              <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 lg:grid-cols-3">
+                {Object.keys(
+                  publicationGroups
+                ).length === 0 ? (
+                  <div className="col-span-full rounded-xl border border-dashed border-gray-300 p-8 text-center dark:border-gray-700">
+                    <p className="text-sm text-gray-500">
+                      No classroom timetables are
+                      available for publication.
+                    </p>
+                  </div>
+                ) : (
+                  Object.entries(
+                    publicationGroups
+                  ).map(
+                    ([
+                      classroomId,
+                      items,
+                    ]) => {
+                      const latest =
+                        items[
+                          items.length - 1
+                        ];
 
-                      if (!current) {
-                        map.set(entry.classroom.id, {
-                          id: entry.classroom.id,
-                          name: entry.classroom.name,
-                          entries: 0,
-                        });
-                      }
+                      const isPublished =
+                        latest?.status ===
+                        "PUBLISHED";
 
-                      const record = map.get(entry.classroom.id);
+                      return (
+                        <div
+                          key={classroomId}
+                          className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"
+                        >
+                          <div className="mb-4 flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="font-semibold text-gray-900 dark:text-white">
+                                {
+                                  latest.class
+                                }
+                              </h3>
 
-                      if (record) record.entries += 1;
-
-                      return map;
-                    }, new Map<string, { id: string; name: string; entries: number }>())
-                    .values()
-                )
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((klass) => {
-                    const publication = publications.find(
-                      (item) =>
-                        item.classroomId === klass.id && item.termId === termId
-                    );
-
-                    const isPublished = publication?.status === "PUBLISHED";
-
-                    return (
-                      <div
-                        key={klass.id}
-                        className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-semibold text-gray-900 dark:text-white">
-                              {klass.name}
-                            </p>
+                              <p className="text-xs text-gray-500">
+                                {
+                                  latest.term
+                                }
+                              </p>
+                            </div>
 
                             <span
-                              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                                isPublished
-                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                              }`}
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${getStatusStyle(
+                                latest.status
+                              )}`}
                             >
-                              {isPublished ? "PUBLISHED" : "DRAFT"}
+                              {getStatusIcon(
+                                latest.status
+                              )}
+
+                              {
+                                latest.status
+                              }
                             </span>
                           </div>
 
-                          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                            {klass.entries} timetable entr
-                            {klass.entries === 1 ? "y" : "ies"}
-                            {publication?.publishedAt
-                              ? ` · published ${new Date(
-                                  publication.publishedAt
-                                ).toLocaleDateString()}`
-                              : ""}
-                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={
+                                publishing !==
+                                null
+                              }
+                              onClick={() =>
+                                publishTimetable(
+                                  classroomId,
+                                  isPublished
+                                    ? "unpublish"
+                                    : "publish"
+                                )
+                              }
+                              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium text-white transition disabled:opacity-50 ${
+                                isPublished
+                                  ? "bg-red-600 hover:bg-red-700"
+                                  : "bg-green-600 hover:bg-green-700"
+                              }`}
+                            >
+                              {publishing ===
+                              `${classroomId}-${
+                                isPublished
+                                  ? "unpublish"
+                                  : "publish"
+                              }` ? (
+                                <Loader2
+                                  size={16}
+                                  className="mx-auto animate-spin"
+                                />
+                              ) : isPublished ? (
+                                "Unpublish"
+                              ) : (
+                                "Publish"
+                              )}
+                            </button>
+                          </div>
                         </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            type="text"
-                            placeholder="Room (e.g. Room 12)"
-                            value={rooms[klass.id] ?? ""}
-                            onChange={(event) =>
-                              setRooms((previous) => ({
-                                ...previous,
-                                [klass.id]: event.target.value,
-                              }))
-                            }
-                            className="w-40 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-white"
-                          />
-
-                          <button
-                            onClick={() =>
-                              publishTimetable(
-                                klass.id,
-                                isPublished ? "UNPUBLISH" : "PUBLISH"
-                              )
-                            }
-                            disabled={publishing === klass.id}
-                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                              isPublished
-                                ? "bg-gray-600 hover:bg-gray-700"
-                                : "bg-blue-600 hover:bg-blue-700"
-                            }`}
-                          >
-                            {publishing === klass.id ? (
-                              <Loader2 size={15} className="animate-spin" />
-                            ) : isPublished ? (
-                              <EyeOff size={15} />
-                            ) : (
-                              <Eye size={15} />
-                            )}
-
-                            {isPublished ? "Unpublish" : "Publish"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+                  )
+                )}
               </div>
             </section>
           )}
 
-          {/* TIMETABLE */}
-          <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Generated Weekly Timetable
-              </h2>
+          {/* ================================================= */}
+          {/* GENERATED WEEKLY TIMETABLE */}
+          {/* ================================================= */}
 
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {currentYear?.name || "Academic year"}{" "}
-                {termId
-                  ? `• ${
-                      currentYear?.terms.find(
-                        (term) => term.id === termId
-                      )?.name || ""
-                    }`
-                  : ""}
-              </p>
-            </div>
+          {!loading && (
+            <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="border-b border-gray-200 p-5 dark:border-gray-800">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      Generated Weekly Timetable
+                    </h2>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2
-                  size={28}
-                  className="animate-spin text-blue-600"
-                />
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {currentYear?.name ||
+                        "Academic Year"}{" "}
+                      {currentTerm
+                        ? `— ${currentTerm.name}`
+                        : ""}
+                    </p>
+                  </div>
+
+                  {timetable.length > 0 && (
+                    <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                      {timetable.length}{" "}
+                      entries
+                    </span>
+                  )}
+                </div>
               </div>
-            ) : timetable.length === 0 ? (
-              <div className="py-14 text-center">
-                <CalendarDays
-                  size={45}
-                  className="mx-auto mb-3 text-gray-400"
-                />
 
-                <p className="font-semibold text-gray-700 dark:text-gray-300">
-                  No timetable generated yet.
-                </p>
-
-                <p className="mt-1 text-sm text-gray-500">
-                  Approve teacher availability and click
-                  &quot;Generate Timetable&quot;.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto p-4">
-                <table className="w-full min-w-[1000px] border-collapse">
+              <div className="overflow-x-auto">
+                <table className="min-w-[900px] w-full border-collapse">
                   <thead>
                     <tr>
-                      <th className="w-24 border border-gray-200 bg-gray-50 p-3 text-left text-xs font-semibold text-gray-500 dark:border-gray-800 dark:bg-gray-950">
+                      <th className="w-24 border-b border-r border-gray-200 bg-gray-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-950/50">
                         Time
                       </th>
 
                       {DAYS.map((day) => (
                         <th
                           key={day}
-                          className="border border-gray-200 bg-gray-50 p-3 text-center text-xs font-semibold text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300"
+                          className="border-b border-r border-gray-200 bg-gray-50 px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-500 last:border-r-0 dark:border-gray-800 dark:bg-gray-950/50"
                         >
                           {formatDay(day)}
                         </th>
@@ -1140,326 +1738,364 @@ export default function TimetablePage() {
                   </thead>
 
                   <tbody>
-                    {TIME_SLOTS.map((startTime) => (
-                      <tr key={startTime}>
-                        <td className="border border-gray-200 bg-gray-50 p-3 text-center text-xs font-semibold text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
-                          {startTime}
-                        </td>
+                    {TIME_SLOTS.map(
+                      (time) => (
+                        <tr key={time}>
+                          <td className="border-b border-r border-gray-200 bg-gray-50 px-4 py-4 align-top text-xs font-semibold text-gray-600 dark:border-gray-800 dark:bg-gray-950/50 dark:text-gray-400">
+                            {time}
+                          </td>
 
-                        {DAYS.map((day) => {
-                          const entry = getTimetableEntry(
-                            day,
-                            startTime
-                          );
+                          {DAYS.map(
+                            (day) => {
+                              const entry =
+                                getTimetableEntry(
+                                  day,
+                                  time
+                                );
 
-                          return (
-                            <td
-                              key={`${day}-${startTime}`}
-                              className="h-24 border border-gray-200 p-2 align-top dark:border-gray-800"
-                            >
-                              {entry ? (
-                                <div className="h-full rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-900/50 dark:bg-blue-900/20">
-                                  <p className="text-sm font-bold text-blue-800 dark:text-blue-300">
-                                    {entry.subject.name}
-                                  </p>
+                              return (
+                                <td
+                                  key={`${day}-${time}`}
+                                  className="h-28 border-b border-r border-gray-200 p-2 align-top last:border-r-0 dark:border-gray-800"
+                                >
+                                  {entry ? (
+                                    <div className="h-full rounded-xl border border-purple-200 bg-purple-50 p-3 dark:border-purple-900/50 dark:bg-purple-900/20">
+                                      <p className="font-semibold text-purple-900 dark:text-purple-300">
+                                        {
+                                          entry
+                                            .subject
+                                            .name
+                                        }
+                                      </p>
 
-                                  <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
-                                    {entry.subject.code}
-                                  </p>
+                                      <p className="mt-1 text-xs text-purple-700 dark:text-purple-400">
+                                        {
+                                          entry
+                                            .subject
+                                            .code
+                                        }
+                                      </p>
 
-                                  <div className="mt-2 space-y-0.5 text-[11px] text-gray-600 dark:text-gray-400">
-                                    <p>
-                                      👨‍🏫{" "}
-                                      {entry.teacher.fullName}
-                                    </p>
+                                      <div className="mt-3 space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                                        <p>
+                                          Teacher:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              entry
+                                                .teacher
+                                                .fullName
+                                            }
+                                          </span>
+                                        </p>
 
-                                    <p>
-                                      🏫{" "}
-                                      {entry.classroom.name}
-                                    </p>
+                                        <p>
+                                          Class:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              entry
+                                                .classroom
+                                                .name
+                                            }
+                                          </span>
+                                        </p>
 
-                                    <p>
-                                      🕐{" "}
-                                      {entry.startTime} -{" "}
-                                      {entry.endTime}
-                                    </p>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex h-full items-center justify-center text-xs text-gray-300 dark:text-gray-700">
-                                  —
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
+                                        <p>
+                                          {
+                                            entry.startTime
+                                          }{" "}
+                                          -{" "}
+                                          {
+                                            entry.endTime
+                                          }
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex h-full min-h-[90px] items-center justify-center rounded-xl border border-dashed border-gray-200 dark:border-gray-800">
+                                      <span className="text-xs text-gray-400">
+                                        Free
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            }
+                          )}
+                        </tr>
+                      )
+                    )}
                   </tbody>
                 </table>
               </div>
-            )}
-          </section>
+
+              {timetable.length === 0 && (
+                <div className="border-t border-gray-200 px-5 py-10 text-center dark:border-gray-800">
+                  <CalendarDays
+                    size={36}
+                    className="mx-auto mb-3 text-gray-400"
+                  />
+
+                  <p className="font-medium text-gray-700 dark:text-gray-300">
+                    No timetable generated
+                  </p>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Select an academic year and
+                    term, then click Generate
+                    Timetable.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
         </main>
       </div>
 
-      {/* =====================================================
-          SMALL BEAUTIFUL TEACHER DETAILS MODAL
-          ===================================================== */}
+      {/* =================================================== */}
+      {/* TEACHER DETAILS MODAL */}
+      {/* =================================================== */}
+
       {selectedTeacher && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          onClick={() => setSelectedTeacher(null)}
-        >
-          <div
-            className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* MODAL HEADER */}
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-                  <Users size={20} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-5 dark:border-gray-800">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  {
+                    selectedTeacher.teacherName
+                  }
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  {
+                    selectedTeacher.teacherCode
+                  }
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedTeacher(null)
+                }
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <XCircle size={22} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="max-h-[70vh] overflow-y-auto p-6">
+              {/* Contact */}
+              <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-950">
+                  <p className="text-xs text-gray-500">
+                    Email
+                  </p>
+
+                  <p className="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+                    {
+                      selectedTeacher.email
+                    }
+                  </p>
                 </div>
 
-                <div className="min-w-0">
-                  <h3 className="truncate text-base font-bold text-gray-900 dark:text-white">
-                    {selectedTeacher.teacherName}
-                  </h3>
+                <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-950">
+                  <p className="text-xs text-gray-500">
+                    Phone
+                  </p>
 
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedTeacher.teacherCode}
+                  <p className="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+                    {
+                      selectedTeacher.phone ||
+                      "Not provided"
+                    }
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={() => setSelectedTeacher(null)}
-                className="rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                aria-label="Close"
-              >
-                <XCircle size={20} />
-              </button>
-            </div>
-
-            {/* MODAL BODY */}
-            <div className="max-h-[75vh] space-y-4 overflow-y-auto p-5">
-
-              {/* TEACHER INFO */}
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                    Teacher Information
-                  </h4>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/70">
-                    <p className="text-[10px] font-medium uppercase text-gray-400">
-                      Teacher ID
-                    </p>
-
-                    <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                      {selectedTeacher.teacherCode}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/70">
-                    <p className="text-[10px] font-medium uppercase text-gray-400">
-                      Name
-                    </p>
-
-                    <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                      {selectedTeacher.teacherName}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/70">
-                    <p className="text-[10px] font-medium uppercase text-gray-400">
-                      Email
-                    </p>
-
-                    <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                      {selectedTeacher.email}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/70">
-                    <p className="text-[10px] font-medium uppercase text-gray-400">
-                      Phone
-                    </p>
-
-                    <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                      {selectedTeacher.phone ||
-                        "Not provided"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* STATUS */}
-              <div>
-                <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-400">
+              {/* Status */}
+              <div className="mb-6">
+                <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">
                   Availability Status
-                </h4>
+                </h3>
 
-                <div className="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-800/70">
-                  <div className="min-w-0 pr-3">
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                      Current status
-                    </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-lg bg-green-100 px-3 py-2 text-sm text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    {
+                      selectedTeacher.approvedCount
+                    }{" "}
+                    approved
+                  </span>
 
-                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      {selectedTeacher.status ===
-                      "PENDING"
-                        ? "Awaiting administrator approval."
-                        : selectedTeacher.status ===
-                          "READY"
-                        ? "Availability has been approved."
-                        : selectedTeacher.status ===
-                          "REJECTED"
-                        ? "Submitted availability was rejected."
-                        : "No availability submitted."}
-                    </p>
-                  </div>
+                  <span className="rounded-lg bg-yellow-100 px-3 py-2 text-sm text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                    {
+                      selectedTeacher.pendingCount
+                    }{" "}
+                    pending
+                  </span>
 
-                  <span
-                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${getStatusStyle(
-                      selectedTeacher.status
-                    )}`}
-                  >
-                    {getStatusIcon(
-                      selectedTeacher.status
-                    )}
-
-                    {selectedTeacher.status}
+                  <span className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    {
+                      selectedTeacher.rejectedCount
+                    }{" "}
+                    rejected
                   </span>
                 </div>
               </div>
 
-              {/* SUBMITTED AVAILABILITY */}
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                      Submitted Availability
-                    </h4>
+              {/* Assignments */}
+              <div className="mb-6">
+                <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">
+                  Assignments
+                </h3>
 
-                    <p className="mt-0.5 text-[11px] text-gray-500">
-                      {selectedTeacher.availability
-                        ?.length ?? 0}{" "}
-                      slot(s)
+                {selectedTeacher
+                  .assignments?.length ===
+                0 ? (
+                  <p className="text-sm text-gray-500">
+                    No assignments found.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {selectedTeacher.assignments.map(
+                      (assignment) => (
+                        <div
+                          key={
+                            assignment.id
+                          }
+                          className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="font-medium text-gray-900 dark:text-white">
+                                {
+                                  assignment
+                                    .subject
+                                    .name
+                                }
+                              </p>
+
+                              <p className="text-xs text-gray-500">
+                                {
+                                  assignment
+                                    .subject
+                                    .code
+                                }
+                              </p>
+                            </div>
+
+                            <span className="rounded-lg bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                              {
+                                assignment
+                                  .classroom
+                                  .name
+                              }
+                            </span>
+                          </div>
+
+                          <p className="mt-2 text-xs text-gray-500">
+                            Section:{" "}
+                            {
+                              assignment
+                                .section
+                                .name
+                            }{" "}
+                            • Coefficient:{" "}
+                            {
+                              assignment
+                                .subject
+                                .coefficient
+                            }
+                          </p>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Availability */}
+              <div>
+                <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">
+                  Availability Slots
+                </h3>
+
+                {selectedTeacher
+                  .availability?.length ===
+                0 ? (
+                  <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center dark:border-gray-700">
+                    <EyeOff
+                      size={24}
+                      className="mx-auto mb-2 text-gray-400"
+                    />
+
+                    <p className="text-sm text-gray-500">
+                      No availability slots
+                      submitted.
                     </p>
                   </div>
-                </div>
-
-                {selectedTeacher.availability &&
-                selectedTeacher.availability.length >
-                  0 ? (
+                ) : (
                   <div className="space-y-2">
                     {selectedTeacher.availability.map(
                       (slot) => (
                         <div
                           key={slot.id}
-                          className="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 px-3.5 py-3 dark:border-gray-800 dark:bg-gray-800/70"
+                          className="flex flex-col gap-3 rounded-xl border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-gray-800"
                         >
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-400">
-                              <Clock3 size={17} />
-                            </div>
+                          <div>
+                            <p className="font-medium text-gray-900 dark:text-white">
+                              {formatDay(
+                                slot.day
+                              )}
+                            </p>
 
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                                {formatDay(slot.day)}
-                              </p>
+                            <p className="text-sm text-gray-500">
+                              {
+                                slot.startTime
+                              }{" "}
+                              -{" "}
+                              {
+                                slot.endTime
+                              }
+                            </p>
 
-                              <p className="text-xs text-gray-500 dark:text-gray-400">
-                                {slot.startTime} -{" "}
-                                {slot.endTime}
+                            {slot.note && (
+                              <p className="mt-1 text-xs text-gray-500">
+                                Note:{" "}
+                                {slot.note}
                               </p>
-                            </div>
+                            )}
                           </div>
 
                           <span
-                            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold ${getStatusStyle(
+                            className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${getStatusStyle(
                               slot.status
                             )}`}
                           >
-                            {getStatusIcon(slot.status)}
+                            {getStatusIcon(
+                              slot.status
+                            )}
+
                             {slot.status}
                           </span>
                         </div>
                       )
                     )}
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-center dark:border-gray-700">
-                    <AlertCircle
-                      size={25}
-                      className="mx-auto mb-2 text-gray-400"
-                    />
-
-                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      No availability submitted
-                    </p>
-
-                    <p className="mt-1 text-xs text-gray-500">
-                      This teacher has not submitted any
-                      availability slots.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* ASSIGNMENTS */}
-              <div>
-                <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-400">
-                  Teaching Assignments
-                </h4>
-
-                {selectedTeacher.assignments &&
-                selectedTeacher.assignments.length >
-                  0 ? (
-                  <div className="space-y-2">
-                    {selectedTeacher.assignments.map(
-                      (assignment) => (
-                        <div
-                          key={assignment.id}
-                          className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3.5 py-3 dark:bg-gray-800/70"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">
-                              {assignment.subject.name}
-                            </p>
-
-                            <p className="mt-0.5 truncate text-xs text-gray-500">
-                              {assignment.subject.code} •{" "}
-                              {assignment.classroom.name}
-                            </p>
-                          </div>
-
-                          <span className="shrink-0 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                            {assignment.section.name}
-                          </span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-gray-50 p-4 text-center dark:bg-gray-800/70">
-                    <p className="text-xs text-gray-500">
-                      No teaching assignments found.
-                    </p>
-                  </div>
                 )}
               </div>
             </div>
 
-            {/* MODAL FOOTER */}
-            <div className="border-t border-gray-200 bg-gray-50/70 px-5 py-3 dark:border-gray-800 dark:bg-gray-900">
+            {/* Footer */}
+            <div className="border-t border-gray-200 px-6 py-4 dark:border-gray-800">
               <button
-                onClick={() => setSelectedTeacher(null)}
-                className="w-full rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+                type="button"
+                onClick={() =>
+                  setSelectedTeacher(null)
+                }
+                className="w-full rounded-xl bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
               >
                 Close
               </button>

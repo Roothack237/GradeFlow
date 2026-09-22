@@ -8,16 +8,24 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // =========================================================
+    // AUTHENTICATION
+    // =========================================================
     const session = await auth();
 
-    if (!session?.user) {
+    if (!session?.user?.email) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
+    // =========================================================
+    // GET CLASS ID FROM [id]
+    // =========================================================
     const { id } = await params;
+
+    console.log("CLASS STUDENTS [id] API:", id);
 
     if (!id) {
       return NextResponse.json(
@@ -26,11 +34,62 @@ export async function GET(
       );
     }
 
+    // =========================================================
+    // FIND TEACHER
+    // =========================================================
+    const user = await prisma.user.findUnique({
+      where: {
+        email: session.user.email,
+      },
+      include: {
+        teacher: true,
+      },
+    });
+
+    if (!user || user.role !== "TEACHER" || !user.teacher) {
+      return NextResponse.json(
+        { error: "Teacher account not found" },
+        { status: 403 }
+      );
+    }
+
+    const teacherId = user.teacher.id;
+
+    // =========================================================
+    // CHECK TEACHER ASSIGNMENT
+    // =========================================================
+    const assignment = await prisma.teacherAssignment.findFirst({
+      where: {
+        teacherId,
+        classroomId: id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!assignment) {
+      return NextResponse.json(
+        {
+          error:
+            "You are not assigned to teach any subject in this classroom.",
+        },
+        { status: 403 }
+      );
+    }
+
+    // =========================================================
+    // LOAD CLASSROOM + STUDENTS
+    // =========================================================
     const classroom = await prisma.classroom.findUnique({
       where: {
         id,
       },
+
       include: {
+        section: true,
+        academicYear: true,
+
         students: {
           select: {
             id: true,
@@ -40,6 +99,7 @@ export async function GET(
             gender: true,
             status: true,
           },
+
           orderBy: [
             {
               lastName: "asc",
@@ -59,18 +119,21 @@ export async function GET(
       );
     }
 
-    /* Suspended and dismissed students keep their history but are no longer
-       part of the current class roll: they are listed separately so marks and
-       attendance sheets only cover actively enrolled students. */
-    const enrolled = classroom.students.filter((student) =>
+    // =========================================================
+    // ENROLLED STUDENTS
+    // =========================================================
+    const enrolledStudents = classroom.students.filter((student) =>
       isEnrolled(student.status)
     );
 
-    const inactive = classroom.students.filter(
+    const inactiveStudents = classroom.students.filter(
       (student) => !isEnrolled(student.status)
     );
 
-    const students = enrolled.map((student) => ({
+    // =========================================================
+    // FORMAT STUDENTS
+    // =========================================================
+    const students = enrolledStudents.map((student) => ({
       id: student.id,
       fullName: `${student.firstName} ${student.lastName}`.trim(),
       firstName: student.firstName,
@@ -81,27 +144,98 @@ export async function GET(
       statusLabel: statusLabel(student.status),
     }));
 
-    return NextResponse.json({
-      classroom: {
-        id: classroom.id,
-        name: classroom.name,
+    // =========================================================
+    // LOAD TEACHER SUBJECTS FOR THIS CLASS
+    // =========================================================
+    const assignments = await prisma.teacherAssignment.findMany({
+      where: {
+        teacherId,
+        classroomId: id,
       },
-      students,
-      totalStudents: students.length,
-      inactiveStudents: inactive.map((student) => ({
-        id: student.id,
-        fullName: `${student.firstName} ${student.lastName}`.trim(),
-        matricule: student.matricule,
-        status: student.status,
-        statusLabel: statusLabel(student.status),
-      })),
-      inactiveCount: inactive.length,
+
+      include: {
+        subject: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            coefficient: true,
+          },
+        },
+      },
+
+      orderBy: {
+        subject: {
+          name: "asc",
+        },
+      },
     });
+
+    const subjectMap = new Map();
+
+    for (const assignment of assignments) {
+      subjectMap.set(
+        assignment.subject.id,
+        assignment.subject
+      );
+    }
+
+    const subjects = Array.from(subjectMap.values());
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+    return NextResponse.json(
+      {
+        success: true,
+
+        classroom: {
+          id: classroom.id,
+          name: classroom.name,
+
+          section: classroom.section
+            ? {
+                id: classroom.section.id,
+                name: classroom.section.name,
+              }
+            : null,
+
+          academicYear: classroom.academicYear
+            ? {
+                id: classroom.academicYear.id,
+                name: classroom.academicYear.name,
+              }
+            : null,
+        },
+
+        students,
+
+        subjects,
+
+        totalStudents: students.length,
+
+        inactiveStudents: inactiveStudents.map((student) => ({
+          id: student.id,
+          fullName: `${student.firstName} ${student.lastName}`.trim(),
+          matricule: student.matricule,
+          status: student.status,
+          statusLabel: statusLabel(student.status),
+        })),
+
+        inactiveCount: inactiveStudents.length,
+      },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("GET TEACHER CLASS STUDENTS ERROR:", error);
+    console.error(
+      "GET TEACHER CLASS STUDENTS ERROR:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Failed to load students" },
+      {
+        error: "Failed to load students",
+      },
       { status: 500 }
     );
   }

@@ -357,7 +357,10 @@ export default function ParentDashboard() {
                         </p>
 
                         <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">
-                          {child.average.toFixed(1)}
+                          {child.average != null
+                            ? Number(child.average).toFixed(1)
+                            : "—"}
+
                         </p>
                       </div>
 

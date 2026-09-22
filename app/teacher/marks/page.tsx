@@ -1,998 +1,885 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-
+import { useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
   BookOpen,
+  Check,
+  ChevronDown,
+  ClipboardList,
   Loader2,
+  RefreshCw,
   Save,
   Search,
-  Trophy,
   Users,
 } from "lucide-react";
 
-type SequenceName =
-  | "First Sequence"
-  | "Second Sequence"
-  | "Third Sequence"
-  | "Fourth Sequence"
-  | "Fifth Sequence"
-  | "Sixth Sequence";
+/* =========================================================
+   TYPES
+========================================================= */
 
-type TermSequence = {
+type Assignment = {
   id: string;
-  name: string;
-  order: number;
+  teacherId?: string;
+  classroomId: string;
+  subjectId: string;
+  sectionId?: string;
+
+  classroom?: {
+    id: string;
+    name: string;
+    academicYearId?: string;
+    section?: {
+      id: string;
+      name: string;
+    };
+  };
+
+  subject?: {
+    id: string;
+    name: string;
+    code?: string | null;
+    coefficient?: number | null;
+  };
+
+  section?: {
+    id: string;
+    name: string;
+  };
 };
 
-type TermOption = {
+type Sequence = {
   id: string;
   name: string;
-  order?: number;
-  sequences?: TermSequence[];
+  order?: number | null;
+  termId: string;
 };
 
-type SequenceMarks = {
-  first: string;
-  second: string;
+type Term = {
+  id: string;
+  name: string;
+  order?: number | null;
+  isCurrent?: boolean;
+  academicYearId?: string | null;
+  sequences?: Sequence[];
 };
 
 type Student = {
   id: string;
-  fullName: string;
+  matricule?: string | null;
   firstName: string;
   lastName: string;
-  matricule: string;
-  gender: string;
-  marks: SequenceMarks;
+  gender?: string | null;
+  classroomId?: string | null;
+  score: string | number;
 };
 
-type TeacherAssignment = {
+type ExistingMark = {
   id: string;
-  section?: {
-    id?: string;
-    name?: string;
-  } | null;
-  classroom?: {
-    id?: string;
-    name?: string;
-  } | null;
-  subject?: {
-    id?: string;
-    name?: string;
-    code?: string;
-  } | null;
+  studentId: string;
+  subjectId: string;
+  teacherId: string;
+  termId: string;
+  sequenceId: string;
+  score: number;
 };
 
-type ClassroomOption = {
-  id: string;
-  name: string;
-  sectionName: string;
+type AssignmentsResponse = {
+  success?: boolean;
+  assignments?: Assignment[];
+  error?: string;
+  message?: string;
 };
 
-type SubjectOption = {
-  id: string;
-  name: string;
-  code: string;
+type TermsResponse = {
+  success?: boolean;
+  terms?: Term[];
+  error?: string;
+  message?: string;
 };
 
-type SavedMark = {
-  id?: string;
-  studentId?: string;
-  subjectId?: string;
-  sequenceId?: string;
-  sequence?: string;
-  sequenceName?: string;
-  average?: number;
-  ca1?: number;
-  ca2?: number;
-  exam?: number;
+type MarksResponse = {
+  success?: boolean;
+  students?: Student[];
+  marks?: ExistingMark[];
+  error?: string;
+  message?: string;
 };
 
-const DEFAULT_TERMS: TermOption[] = [];
+/* =========================================================
+   PAGE
+========================================================= */
 
-function getSequencesForTerm(
-  term: TermOption | null
-): [SequenceName, SequenceName] {
-  /*
-   * IMPORTANT:
-   * Use the REAL sequences returned by the database.
-   *
-   * We do not assume:
-   * First Term  -> First/Second
-   * Second Term -> Third/Fourth
-   * Third Term  -> Fifth/Sixth
-   *
-   * The database is the source of truth.
-   */
+export default function TeacherMarksPage() {
+  /* =======================================================
+     STATE
+  ======================================================= */
 
-  if (term?.sequences && term.sequences.length >= 2) {
-    const sortedSequences = [...term.sequences].sort(
-      (a, b) => a.order - b.order
-    );
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [terms, setTerms] = useState<Term[]>([]);
+  const [sequences, setSequences] = useState<Sequence[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
 
-    return [
-      sortedSequences[0].name as SequenceName,
-      sortedSequences[1].name as SequenceName,
-    ];
-  }
-
-  /*
-   * Fallback only in case the API does not return sequences.
-   */
-  const order = term?.order || 1;
-
-  if (order === 2) {
-    return ["Third Sequence", "Fourth Sequence"];
-  }
-
-  if (order === 3) {
-    return ["Fifth Sequence", "Sixth Sequence"];
-  }
-
-  return ["First Sequence", "Second Sequence"];
-}
-
-function getSequenceKey(
-  sequence: SequenceName
-): keyof SequenceMarks {
-  if (
-    sequence === "First Sequence" ||
-    sequence === "Third Sequence" ||
-    sequence === "Fifth Sequence"
-  ) {
-    return "first";
-  }
-
-  return "second";
-}
-
-function getSequenceShortName(
-  sequence: SequenceName
-): string {
-  const names: Record<SequenceName, string> = {
-    "First Sequence": "1st",
-    "Second Sequence": "2nd",
-    "Third Sequence": "3rd",
-    "Fourth Sequence": "4th",
-    "Fifth Sequence": "5th",
-    "Sixth Sequence": "6th",
-  };
-
-  return names[sequence];
-}
-
-function calculateTermAverage(
-  marks: SequenceMarks
-): number | null {
-  const values = [marks.first, marks.second]
-    .map((value) => (value === "" ? null : Number(value)))
-    .filter(
-      (value): value is number =>
-        value !== null && !Number.isNaN(value)
-    );
-
-  if (values.length === 0) {
-    return null;
-  }
-
-  return (
-    values.reduce((sum, value) => sum + value, 0) /
-    values.length
-  );
-}
-
-function formatAverage(
-  average: number | null
-): string {
-  if (average === null) {
-    return "—";
-  }
-
-  return average.toFixed(2);
-}
-
-function getPosition(
-  studentId: string,
-  students: Student[]
-): number | null {
-  const averages = students
-    .map((student) => ({
-      id: student.id,
-      average: calculateTermAverage(student.marks),
-    }))
-    .filter(
-      (
-        item
-      ): item is {
-        id: string;
-        average: number;
-      } => item.average !== null
-    )
-    .sort((a, b) => b.average - a.average);
-
-  const student = averages.find(
-    (item) => item.id === studentId
-  );
-
-  if (!student) {
-    return null;
-  }
-
-  return (
-    averages.filter(
-      (item) => item.average > student.average
-    ).length + 1
-  );
-}
-
-function formatPosition(
-  position: number | null
-): string {
-  if (position === null) {
-    return "—";
-  }
-
-  if (position >= 11 && position <= 13) {
-    return `${position}th`;
-  }
-
-  switch (position % 10) {
-    case 1:
-      return `${position}st`;
-    case 2:
-      return `${position}nd`;
-    case 3:
-      return `${position}rd`;
-    default:
-      return `${position}th`;
-  }
-}
-
-function normalizeTermName(name: string): string {
-  const value = name.toLowerCase().trim();
-
-  if (
-    value.includes("first") ||
-    value === "term 1" ||
-    value === "1st term"
-  ) {
-    return "First Term";
-  }
-
-  if (
-    value.includes("second") ||
-    value === "term 2" ||
-    value === "2nd term"
-  ) {
-    return "Second Term";
-  }
-
-  if (
-    value.includes("third") ||
-    value === "term 3" ||
-    value === "3rd term"
-  ) {
-    return "Third Term";
-  }
-
-  return name;
-}
-
-/*
- * Get the REAL sequence record stored in the database.
- *
- * We use the sequence name to find the exact sequence
- * inside the selected term, then use its real database order.
- */
-function getSelectedSequence(
-  term: TermOption | null,
-  sequence: SequenceName
-): TermSequence | null {
-  if (!term?.sequences) {
-    return null;
-  }
-
-  return (
-    term.sequences.find(
-      (item) => item.name === sequence
-    ) || null
-  );
-}
-
-export default function TeacherMarksPageRoute() {
-  return (
-    <Suspense fallback={null}>
-      <TeacherMarksPage />
-    </Suspense>
-  );
-}
-
-function TeacherMarksPage() {
-  const searchParams = useSearchParams();
-
-  const classIdFromUrl =
-    searchParams.get("classId");
-
-  const [assignments, setAssignments] =
-    useState<TeacherAssignment[]>([]);
-
-  const [terms, setTerms] =
-    useState<TermOption[]>(DEFAULT_TERMS);
-
-  const [students, setStudents] =
-    useState<Student[]>([]);
-
-  const [classroom, setClassroom] =
+  const [selectedClassroomId, setSelectedClassroomId] =
     useState("");
 
-  const [subject, setSubject] =
+  const [selectedSubjectId, setSelectedSubjectId] =
     useState("");
 
-  /*
-   * IMPORTANT:
-   * Start empty.
-   * We wait for the real term ID from the API.
-   */
-  const [termId, setTermId] =
+  const [selectedTermId, setSelectedTermId] =
     useState("");
 
-  const [sequence, setSequence] =
-    useState<SequenceName>("First Sequence");
-
-  const [search, setSearch] =
+  const [selectedSequenceId, setSelectedSequenceId] =
     useState("");
 
-  const [
-    loadingAssignments,
-    setLoadingAssignments,
-  ] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  const [
-    loadingStudents,
-    setLoadingStudents,
-  ] = useState(false);
+  const [loadingAssignments, setLoadingAssignments] =
+    useState(true);
 
-  const [
-    loadingMarks,
-    setLoadingMarks,
-  ] = useState(false);
+  const [loadingTerms, setLoadingTerms] =
+    useState(true);
 
-  const [saving, setSaving] =
+  const [loadingSequences, setLoadingSequences] =
     useState(false);
 
-  const [error, setError] =
-    useState("");
+  const [loadingMarks, setLoadingMarks] =
+    useState(false);
 
-  const [
-    successMessage,
-    setSuccessMessage,
-  ] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const selectedTerm = useMemo(() => {
-    return (
-      terms.find(
-        (term) => term.id === termId
-      ) || null
-    );
-  }, [terms, termId]);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  /*
-   * Get the actual two sequences belonging
-   * to the selected term.
-   */
-  const availableSequences =
-    useMemo(() => {
-      return getSequencesForTerm(
-        selectedTerm
-      );
-    }, [selectedTerm]);
-
-  /*
-   * Whenever the term changes, select the
-   * first real sequence belonging to that term.
-   */
-  useEffect(() => {
-    if (availableSequences.length > 0) {
-      setSequence(
-        availableSequences[0]
-      );
-    }
-  }, [termId, availableSequences]);
-
-  /*
-   * Load teacher assignments.
-   */
-  useEffect(() => {
-    async function fetchAssignments() {
-      try {
-        setLoadingAssignments(true);
-        setError("");
-
-        const response = await fetch(
-          "/api/teacher/assignments",
-          {
-            cache: "no-store",
-          }
-        );
-
-        const data =
-          await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            data?.error ||
-              data?.message ||
-              "Failed to load teacher assignments"
-          );
-        }
-
-        const teacherAssignments: TeacherAssignment[] =
-          Array.isArray(data)
-            ? data
-            : data.assignments || [];
-
-        setAssignments(
-          teacherAssignments
-        );
-
-        if (classIdFromUrl) {
-          const matchingAssignment =
-            teacherAssignments.find(
-              (assignment) =>
-                assignment.classroom?.id ===
-                classIdFromUrl
-            );
-
-          if (matchingAssignment) {
-            setClassroom(
-              classIdFromUrl
-            );
-
-            if (
-              matchingAssignment.subject?.id
-            ) {
-              setSubject(
-                matchingAssignment.subject.id
-              );
-            }
-          }
-        } else {
-          const firstAssignment =
-            teacherAssignments.find(
-              (assignment) =>
-                assignment.classroom?.id
-            );
-
-          if (
-            firstAssignment?.classroom?.id
-          ) {
-            setClassroom(
-              firstAssignment.classroom.id
-            );
-
-            if (
-              firstAssignment.subject?.id
-            ) {
-              setSubject(
-                firstAssignment.subject.id
-              );
-            }
-          }
-        }
-      } catch (err) {
-        console.error(
-          "FETCH TEACHER ASSIGNMENTS ERROR:",
-          err
-        );
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load assignments"
-        );
-      } finally {
-        setLoadingAssignments(false);
-      }
-    }
-
-    fetchAssignments();
-  }, [classIdFromUrl]);
-
-  /*
-   * Load terms.
-   */
-  useEffect(() => {
-    async function fetchTerms() {
-      try {
-        const response = await fetch(
-          "/api/teacher/terms",
-          {
-            cache: "no-store",
-          }
-        );
-
-        if (!response.ok) {
-          return;
-        }
-
-        const data =
-          await response.json();
-
-        const apiTerms = Array.isArray(data)
-          ? data
-          : data.terms || [];
-
-        if (
-          Array.isArray(apiTerms) &&
-          apiTerms.length > 0
-        ) {
-          const formattedTerms: TermOption[] =
-            apiTerms
-              .map(
-                (term: {
-                  id?: string;
-                  name?: string;
-                  order?: number;
-                  sequences?: {
-                    id?: string;
-                    name?: string;
-                    order?: number;
-                  }[];
-                }) => ({
-                  id: term.id || "",
-                  name: normalizeTermName(
-                    term.name || ""
-                  ),
-                  order: term.order,
-
-                  /*
-                   * Keep the actual sequence
-                   * records returned by the API.
-                   */
-                  sequences:
-                    Array.isArray(
-                      term.sequences
-                    )
-                      ? term.sequences
-                          .filter(
-                            (sequence) =>
-                              sequence.id &&
-                              sequence.name &&
-                              typeof sequence.order ===
-                                "number"
-                          )
-                          .map(
-                            (sequence) => ({
-                              id:
-                                sequence.id!,
-                              name:
-                                sequence.name!,
-                              order:
-                                sequence.order!,
-                            })
-                          )
-                          .sort(
-                            (a, b) =>
-                              a.order - b.order
-                          )
-                      : [],
-                })
-              )
-              .filter(
-                (term: TermOption) =>
-                  term.id && term.name
-              )
-              .sort(
-                (a, b) =>
-                  (a.order || 0) -
-                  (b.order || 0)
-              )
-              .slice(0, 3);
-
-          if (
-            formattedTerms.length > 0
-          ) {
-            setTerms(
-              formattedTerms
-            );
-
-            /*
-             * Use the REAL database term ID.
-             */
-            setTermId(
-              formattedTerms[0].id
-            );
-
-            /*
-             * Also immediately use the first
-             * actual sequence from the database.
-             */
-            if (
-              formattedTerms[0]
-                .sequences &&
-              formattedTerms[0]
-                .sequences.length > 0
-            ) {
-              setSequence(
-                formattedTerms[0]
-                  .sequences[0]
-                  .name as SequenceName
-              );
-            }
-          }
-        }
-      } catch (err) {
-        console.log(
-          "Failed to load terms:",
-          err
-        );
-      }
-    }
-
-    fetchTerms();
-  }, []);
-
-  const assignedClassrooms =
-    useMemo<ClassroomOption[]>(() => {
-      const map = new Map<
-        string,
-        ClassroomOption
-      >();
-
-      assignments.forEach(
-        (assignment) => {
-          const id =
-            assignment.classroom?.id;
-
-          if (!id) {
-            return;
-          }
-
-          if (!map.has(id)) {
-            map.set(id, {
-              id,
-              name:
-                assignment.classroom?.name ||
-                "Unknown Classroom",
-              sectionName:
-                assignment.section?.name ||
-                "Unknown Section",
-            });
-          }
-        }
-      );
-
-      return Array.from(
-        map.values()
-      );
-    }, [assignments]);
-
-  const assignedSubjects =
-    useMemo<SubjectOption[]>(() => {
-      const map = new Map<
-        string,
-        SubjectOption
-      >();
-
-      assignments
-        .filter(
-          (assignment) =>
-            assignment.classroom?.id ===
-            classroom
-        )
-        .forEach(
-          (assignment) => {
-            const id =
-              assignment.subject?.id;
-
-            if (!id) {
-              return;
-            }
-
-            if (!map.has(id)) {
-              map.set(id, {
-                id,
-                name:
-                  assignment.subject?.name ||
-                  "Unknown Subject",
-                code:
-                  assignment.subject?.code ||
-                  "",
-              });
-            }
-          }
-        );
-
-      return Array.from(
-        map.values()
-      );
-    }, [assignments, classroom]);
+  /* =======================================================
+     DEBUG
+  ======================================================= */
 
   useEffect(() => {
-    if (!classroom) {
-      setSubject("");
-      return;
-    }
-
-    const valid =
-      assignedSubjects.some(
-        (item) => item.id === subject
-      );
-
-    if (!valid) {
-      setSubject(
-        assignedSubjects[0]?.id || ""
-      );
-    }
+    console.log("========== MARKS PAGE DEBUG ==========");
+    console.log("assignments:", assignments);
+    console.log("terms:", terms);
+    console.log("selectedClassroomId:", selectedClassroomId);
+    console.log("selectedSubjectId:", selectedSubjectId);
+    console.log("selectedTermId:", selectedTermId);
+    console.log("sequences:", sequences);
+    console.log("selectedSequenceId:", selectedSequenceId);
+    console.log("students:", students);
+    console.log("======================================");
   }, [
-    classroom,
-    assignedSubjects,
-    subject,
+    assignments,
+    terms,
+    selectedClassroomId,
+    selectedSubjectId,
+    selectedTermId,
+    sequences,
+    selectedSequenceId,
+    students,
   ]);
 
-  /*
-   * Load students + marks.
-   */
+  /* =======================================================
+     LOAD ASSIGNMENTS
+  ======================================================= */
+
   useEffect(() => {
-    async function fetchStudentsAndMarks() {
-      if (!classroom) {
+    loadAssignments();
+  }, []);
+
+  async function loadAssignments() {
+    setLoadingAssignments(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        "/api/teacher/assignments",
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const data: AssignmentsResponse =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            data.message ||
+            "Failed to load teacher assignments."
+        );
+      }
+
+      const loadedAssignments = Array.isArray(
+        data.assignments
+      )
+        ? data.assignments
+        : [];
+
+      setAssignments(loadedAssignments);
+
+      if (loadedAssignments.length > 0) {
+        const firstAssignment =
+          loadedAssignments[0];
+
+        const classroomId =
+          firstAssignment.classroomId ||
+          firstAssignment.classroom?.id ||
+          "";
+
+        const subjectId =
+          firstAssignment.subjectId ||
+          firstAssignment.subject?.id ||
+          "";
+
+        setSelectedClassroomId(classroomId);
+        setSelectedSubjectId(subjectId);
+      } else {
+        setSelectedClassroomId("");
+        setSelectedSubjectId("");
         setStudents([]);
+      }
+    } catch (err) {
+      console.error(
+        "LOAD ASSIGNMENTS ERROR:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load teacher assignments."
+      );
+
+      setAssignments([]);
+    } finally {
+      setLoadingAssignments(false);
+    }
+  }
+
+  /* =======================================================
+     LOAD TERMS
+     
+     IMPORTANT:
+     Sequences are loaded together with their term.
+     
+     We DO NOT call:
+     /api/teacher/marks/sequences
+  ======================================================= */
+
+  useEffect(() => {
+    loadTerms();
+  }, []);
+
+  async function loadTerms() {
+    setLoadingTerms(true);
+
+    try {
+      const response = await fetch(
+        "/api/teacher/marks/terms",
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const rawText = await response.text();
+
+      let data: TermsResponse = {};
+
+      try {
+        data = rawText
+          ? JSON.parse(rawText)
+          : {};
+      } catch {
+        throw new Error(
+          `Terms API returned invalid JSON. Status: ${response.status}`
+        );
+      }
+
+      console.log(
+        "TERMS API RESPONSE:",
+        data
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            data.message ||
+            `Failed to load terms. HTTP ${response.status}`
+        );
+      }
+
+      const loadedTerms = Array.isArray(
+        data.terms
+      )
+        ? data.terms
+        : [];
+
+      if (loadedTerms.length === 0) {
+        setTerms([]);
+        setSelectedTermId("");
+        setSequences([]);
+        setSelectedSequenceId("");
+
+        setError(
+          "No terms are available. Please make sure Term 1, Term 2 and Term 3 exist in the database."
+        );
+
         return;
       }
 
-      try {
-        setLoadingStudents(true);
-        setLoadingMarks(true);
-        setError("");
-        setSuccessMessage("");
+      /* ---------------------------------------------------
+         Sort terms
+      --------------------------------------------------- */
 
-        const studentsResponse =
-          await fetch(
-            `/api/teacher/classes/${classroom}/students`,
-            {
-              cache: "no-store",
-            }
-          );
+      const sortedTerms = [...loadedTerms].sort(
+        (a, b) =>
+          (a.order ?? 0) -
+          (b.order ?? 0)
+      );
 
-        const studentsData =
-          await studentsResponse.json();
+      setTerms(sortedTerms);
 
-        if (!studentsResponse.ok) {
-          throw new Error(
-            studentsData?.error ||
-              studentsData?.message ||
-              "Failed to load students"
-          );
-        }
+      /* ---------------------------------------------------
+         Select current term if available.
+         Otherwise select first term.
+      --------------------------------------------------- */
 
-        const apiStudents =
-          Array.isArray(studentsData)
-            ? studentsData
-            : studentsData.students || [];
+      const currentTerm =
+        sortedTerms.find(
+          (term) => term.isCurrent === true
+        ) ?? sortedTerms[0];
 
-        const formattedStudents: Student[] =
-          apiStudents.map(
-            (student: {
-              id: string;
-              fullName?: string;
-              firstName?: string;
-              lastName?: string;
-              matricule?: string;
-              gender?: string;
-            }) => ({
-              id: student.id,
-              fullName:
-                student.fullName ||
-                `${student.firstName || ""} ${
-                  student.lastName || ""
-                }`.trim(),
-              firstName:
-                student.firstName || "",
-              lastName:
-                student.lastName || "",
-              matricule:
-                student.matricule || "",
-              gender:
-                student.gender || "",
-              marks: {
-                first: "",
-                second: "",
-              },
-            })
-          );
+      setSelectedTermId(
+        currentTerm?.id ?? ""
+      );
+    } catch (err) {
+      console.error(
+        "LOAD TERMS ERROR:",
+        err
+      );
 
-        /*
-         * Load saved marks for selected term.
-         */
-        if (
-          subject &&
-          termId &&
-          !termId.startsWith("term-")
-        ) {
-          try {
-            const params =
-              new URLSearchParams({
-                classroomId: classroom,
-                subjectId: subject,
-                termId,
-              });
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load terms."
+      );
 
-            const marksResponse =
-              await fetch(
-                `/api/teacher/marks?${params.toString()}`,
-                {
-                  cache: "no-store",
-                }
-              );
+      setTerms([]);
+      setSelectedTermId("");
+      setSequences([]);
+      setSelectedSequenceId("");
+    } finally {
+      setLoadingTerms(false);
+    }
+  }
 
-            if (!marksResponse.ok) {
-              const errorText =
-                await marksResponse.text();
+  /* =======================================================
+     DERIVE SEQUENCES FROM SELECTED TERM
+     
+     NO API CALL HERE.
+     
+     Term 1:
+       First Sequence
+       Second Sequence
 
-              console.error(
-                "LOAD SAVED MARKS ERROR:",
-                marksResponse.status,
-                errorText
-              );
-            } else {
-              const marksData =
-                await marksResponse.json();
+     Term 2:
+       Third Sequence
+       Fourth Sequence
 
-              const savedMarks: SavedMark[] =
-                Array.isArray(marksData)
-                  ? marksData
-                  : marksData.marks || [];
+     Term 3:
+       Fifth Sequence
+       Sixth Sequence
+  ======================================================= */
 
-              const [
-                firstSequence,
-                secondSequence,
-              ] = getSequencesForTerm(
-                selectedTerm
-              );
+  useEffect(() => {
+    if (!selectedTermId) {
+      setSequences([]);
+      setSelectedSequenceId("");
+      setStudents([]);
+      return;
+    }
 
-              for (const student of formattedStudents) {
-                const studentMarks =
-                  savedMarks.filter(
-                    (mark) =>
-                      mark.studentId ===
-                      student.id
-                  );
+    setLoadingSequences(true);
 
-                for (const mark of studentMarks) {
-                  const savedSequence =
-                    mark.sequenceName ||
-                    mark.sequence ||
-                    "";
+    const selectedTerm = terms.find(
+      (term) =>
+        term.id === selectedTermId
+    );
 
-                  const value =
-                    mark.average ??
-                    mark.ca1 ??
-                    "";
+    const termSequences =
+      Array.isArray(
+        selectedTerm?.sequences
+      )
+        ? [...selectedTerm.sequences]
+        : [];
 
-                  if (
-                    savedSequence ===
-                    firstSequence
-                  ) {
-                    student.marks.first =
-                      String(value);
-                  }
-
-                  if (
-                    savedSequence ===
-                    secondSequence
-                  ) {
-                    student.marks.second =
-                      String(value);
-                  }
-                }
-              }
-            }
-          } catch (marksError) {
-            console.error(
-              "LOAD SAVED MARKS ERROR:",
-              marksError
-            );
-          }
-        }
-
-        setStudents(
-          formattedStudents
-        );
-      } catch (err) {
-        console.error(
-          "FETCH TEACHER STUDENTS ERROR:",
-          err
+    const sortedSequences =
+      termSequences
+        .filter(
+          (sequence) =>
+            sequence.termId ===
+            selectedTermId
+        )
+        .sort(
+          (a, b) =>
+            (a.order ?? 0) -
+            (b.order ?? 0)
         );
 
+    console.log(
+      "SEQUENCES FOR SELECTED TERM:",
+      selectedTerm?.name,
+      sortedSequences
+    );
+
+    setSequences(sortedSequences);
+
+    /* -----------------------------------------------------
+       Automatically select first sequence
+    ----------------------------------------------------- */
+
+    if (sortedSequences.length > 0) {
+      setSelectedSequenceId(
+        sortedSequences[0].id
+      );
+    } else {
+      setSelectedSequenceId("");
+
+      if (selectedTerm) {
         setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load students"
+          `No sequences are configured for ${selectedTerm.name}.`
         );
-
-        setStudents([]);
-      } finally {
-        setLoadingStudents(false);
-        setLoadingMarks(false);
       }
     }
 
-    fetchStudentsAndMarks();
-  }, [
-    classroom,
-    subject,
-    termId,
-    selectedTerm,
-  ]);
+    setStudents([]);
+    setLoadingSequences(false);
+  }, [selectedTermId, terms]);
+
+  /* =======================================================
+     CLASSROOMS
+  ======================================================= */
+
+  const classrooms = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        sectionName?: string;
+      }
+    >();
+
+    for (const assignment of assignments) {
+      const classroomId =
+        assignment.classroomId ||
+        assignment.classroom?.id;
+
+      if (!classroomId) {
+        continue;
+      }
+
+      const classroomName =
+        assignment.classroom?.name ||
+        "Unnamed Classroom";
+
+      const sectionName =
+        assignment.classroom?.section?.name ||
+        assignment.section?.name;
+
+      if (!map.has(classroomId)) {
+        map.set(classroomId, {
+          id: classroomId,
+          name: classroomName,
+          sectionName,
+        });
+      }
+    }
+
+    return Array.from(map.values());
+  }, [assignments]);
+
+  /* =======================================================
+     SUBJECTS FOR SELECTED CLASSROOM
+  ======================================================= */
+
+  const subjectsForSelectedClass =
+    useMemo(() => {
+      const map = new Map<
+        string,
+        {
+          id: string;
+          name: string;
+          code?: string | null;
+          coefficient?: number | null;
+        }
+      >();
+
+      for (const assignment of assignments) {
+        const classroomId =
+          assignment.classroomId ||
+          assignment.classroom?.id;
+
+        if (
+          classroomId !==
+          selectedClassroomId
+        ) {
+          continue;
+        }
+
+        const subjectId =
+          assignment.subjectId ||
+          assignment.subject?.id;
+
+        if (!subjectId) {
+          continue;
+        }
+
+        if (!map.has(subjectId)) {
+          map.set(subjectId, {
+            id: subjectId,
+            name:
+              assignment.subject?.name ||
+              "Unnamed Subject",
+            code:
+              assignment.subject?.code,
+            coefficient:
+              assignment.subject
+                ?.coefficient,
+          });
+        }
+      }
+
+      return Array.from(map.values());
+    }, [
+      assignments,
+      selectedClassroomId,
+    ]);
+
+  /* =======================================================
+     SELECTED CLASSROOM
+  ======================================================= */
 
   const selectedClassroom =
     useMemo(() => {
-      return assignedClassrooms.find(
-        (item) =>
-          item.id === classroom
+      return classrooms.find(
+        (classroom) =>
+          classroom.id ===
+          selectedClassroomId
       );
     }, [
-      assignedClassrooms,
-      classroom,
+      classrooms,
+      selectedClassroomId,
     ]);
+
+  /* =======================================================
+     SELECTED SUBJECT
+  ======================================================= */
 
   const selectedSubject =
     useMemo(() => {
-      return assignedSubjects.find(
-        (item) =>
-          item.id === subject
+      return subjectsForSelectedClass.find(
+        (subject) =>
+          subject.id ===
+          selectedSubjectId
       );
     }, [
-      assignedSubjects,
-      subject,
+      subjectsForSelectedClass,
+      selectedSubjectId,
     ]);
 
-  const filteredStudents =
-    useMemo(() => {
-      const searchTerm =
-        search
-          .toLowerCase()
-          .trim();
+  /* =======================================================
+     SELECTED TERM
+  ======================================================= */
 
-      if (!searchTerm) {
-        return students;
+  const selectedTerm =
+    useMemo(() => {
+      return terms.find(
+        (term) =>
+          term.id === selectedTermId
+      );
+    }, [
+      terms,
+      selectedTermId,
+    ]);
+
+  /* =======================================================
+     SELECTED SEQUENCE
+  ======================================================= */
+
+  const selectedSequence =
+    useMemo(() => {
+      return sequences.find(
+        (sequence) =>
+          sequence.id ===
+          selectedSequenceId
+      );
+    }, [
+      sequences,
+      selectedSequenceId,
+    ]);
+
+  /* =======================================================
+     CLASSROOM CHANGE
+  ======================================================= */
+
+  function handleClassroomChange(
+    classroomId: string
+  ) {
+    setSelectedClassroomId(
+      classroomId
+    );
+
+    const firstAssignment =
+      assignments.find(
+        (assignment) => {
+          const assignmentClassroomId =
+            assignment.classroomId ||
+            assignment.classroom?.id;
+
+          return (
+            assignmentClassroomId ===
+            classroomId
+          );
+        }
+      );
+
+    const firstSubjectId =
+      firstAssignment?.subjectId ||
+      firstAssignment?.subject?.id ||
+      "";
+
+    setSelectedSubjectId(
+      firstSubjectId
+    );
+
+    setStudents([]);
+    setSuccess("");
+    setError("");
+  }
+
+  /* =======================================================
+     SUBJECT CHANGE
+  ======================================================= */
+
+  function handleSubjectChange(
+    subjectId: string
+  ) {
+    setSelectedSubjectId(
+      subjectId
+    );
+
+    setStudents([]);
+    setSuccess("");
+    setError("");
+  }
+
+  /* =======================================================
+     TERM CHANGE
+  ======================================================= */
+
+  function handleTermChange(
+    termId: string
+  ) {
+    console.log(
+      "TERM CHANGED:",
+      termId
+    );
+
+    setSelectedTermId(termId);
+
+    /*
+      The sequence effect will automatically
+      find the sequences belonging to this term.
+    */
+
+    setSelectedSequenceId("");
+    setStudents([]);
+    setSuccess("");
+    setError("");
+  }
+
+  /* =======================================================
+     SEQUENCE CHANGE
+  ======================================================= */
+
+  function handleSequenceChange(
+    sequenceId: string
+  ) {
+    console.log(
+      "SEQUENCE CHANGED:",
+      sequenceId
+    );
+
+    setSelectedSequenceId(
+      sequenceId
+    );
+
+    setStudents([]);
+    setSuccess("");
+    setError("");
+  }
+
+  /* =======================================================
+     LOAD MARKS
+  ======================================================= */
+
+  useEffect(() => {
+    if (
+      !selectedClassroomId ||
+      !selectedSubjectId ||
+      !selectedTermId ||
+      !selectedSequenceId
+    ) {
+      setStudents([]);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    loadMarks(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    selectedClassroomId,
+    selectedSubjectId,
+    selectedTermId,
+    selectedSequenceId,
+  ]);
+
+  async function loadMarks(signal?: AbortSignal) {
+    setLoadingMarks(true);
+    setError("");
+
+    try {
+      const params =
+        new URLSearchParams({
+          classroomId:
+            selectedClassroomId,
+          subjectId:
+            selectedSubjectId,
+          termId:
+            selectedTermId,
+          sequenceId:
+            selectedSequenceId,
+        });
+
+      const response = await fetch(
+        `/api/teacher/marks?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          signal,
+        }
+      );
+
+      const data: MarksResponse =
+        await response.json();
+
+      console.log(
+        "MARKS API RESPONSE:",
+        data
+      );
+
+      if (!response.ok) {
+        throw new Error(
+            data.message ||
+            data.error ||
+            "Failed to load marks."
+        );
       }
 
-      return students.filter(
-        (student) =>
-          student.fullName
-            .toLowerCase()
-            .includes(searchTerm) ||
-          student.matricule
-            .toLowerCase()
-            .includes(searchTerm)
-      );
-    }, [
-      students,
-      search,
-    ]);
+      const loadedStudents =
+        Array.isArray(
+          data.students
+        )
+          ? data.students
+          : [];
 
-  function updateMark(
-    id: string,
-    value: string,
-    sequenceName: SequenceName
+      const loadedMarks =
+        Array.isArray(data.marks)
+          ? data.marks
+          : [];
+
+      /*
+        Map existing marks by student.
+      */
+
+      const markMap =
+        new Map<string, number>();
+
+      for (const mark of loadedMarks) {
+        markMap.set(
+          mark.studentId,
+          mark.score
+        );
+      }
+
+      /*
+        Add score to every student.
+      */
+
+      const rows: Student[] =
+        loadedStudents.map(
+          (student) => ({
+            ...student,
+            score: markMap.has(
+              student.id
+            )
+              ? markMap.get(
+                  student.id
+                )!
+              : "",
+          })
+        );
+
+      setStudents(rows);
+    } catch (err) {
+      if (
+        err instanceof DOMException &&
+        err.name === "AbortError"
+      ) {
+        return;
+      }
+
+      console.error(
+        "LOAD MARKS ERROR:",
+        err
+      );
+
+      setStudents([]);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load marks."
+      );
+    } finally {
+      setLoadingMarks(false);
+    }
+  }
+
+  /* =======================================================
+     UPDATE SCORE
+  ======================================================= */
+
+  function updateScore(
+    studentId: string,
+    value: string
   ) {
-    const key =
-      getSequenceKey(sequenceName);
+    /*
+      Allow empty input.
+    */
 
     if (value === "") {
-      setStudents((current) =>
-        current.map((student) =>
-          student.id === id
+      setStudents((previous) =>
+        previous.map((student) =>
+          student.id === studentId
             ? {
                 ...student,
-                marks: {
-                  ...student.marks,
-                  [key]: "",
-                },
+                score: "",
               }
             : student
         )
@@ -1001,181 +888,147 @@ function TeacherMarksPage() {
       return;
     }
 
-    /*
-     * Allow:
-     * 10
-     * 10.5
-     * 0.5
-     * 20
-     */
-    if (!/^\d*\.?\d*$/.test(value)) {
-      return;
-    }
-
     const numericValue =
       Number(value);
 
     if (
-      numericValue < 0 ||
-      numericValue > 20
+      Number.isNaN(numericValue)
     ) {
       return;
     }
 
-    setStudents((current) =>
-      current.map((student) =>
-        student.id === id
+    /*
+      Keep score between 0 and 20.
+    */
+
+    const boundedValue =
+      Math.min(
+        20,
+        Math.max(
+          0,
+          numericValue
+        )
+      );
+
+    setStudents((previous) =>
+      previous.map((student) =>
+        student.id === studentId
           ? {
               ...student,
-              marks: {
-                ...student.marks,
-                [key]: value,
-              },
+              score:
+                boundedValue,
             }
           : student
       )
     );
   }
 
+  /* =======================================================
+     SAVE MARKS
+  ======================================================= */
+
   async function handleSave() {
-    if (!classroom) {
-      alert(
+    setError("");
+    setSuccess("");
+
+    if (!selectedClassroomId) {
+      setError(
         "Please select a classroom."
       );
       return;
     }
 
-    if (!subject) {
-      alert(
+    if (!selectedSubjectId) {
+      setError(
         "Please select a subject."
       );
       return;
     }
 
-    if (!termId) {
-      alert(
+    if (!selectedTermId) {
+      setError(
         "Please select a term."
       );
       return;
     }
 
-    if (!selectedTerm) {
-      alert(
-        "Selected term could not be found."
-      );
-      return;
-    }
-
-    /*
-     * IMPORTANT:
-     *
-     * Get the exact sequence from the
-     * selected term's database records.
-     */
-    const selectedSequence =
-      getSelectedSequence(
-        selectedTerm,
-        sequence
-      );
-
-    if (!selectedSequence) {
+    if (!selectedSequenceId) {
       setError(
-        `Invalid sequence "${sequence}" for ${selectedTerm.name}.`
-      );
-
-      console.error(
-        "SEQUENCE NOT FOUND IN SELECTED TERM:",
-        {
-          selectedTerm,
-          sequence,
-          availableSequences:
-            selectedTerm.sequences,
-        }
-      );
-
-      return;
-    }
-
-    /*
-     * Verify the teacher is assigned to
-     * the selected classroom + subject.
-     */
-    const validAssignment =
-      assignments.some(
-        (assignment) =>
-          assignment.classroom?.id ===
-            classroom &&
-          assignment.subject?.id ===
-            subject
-      );
-
-    if (!validAssignment) {
-      alert(
-        "You are not assigned to this subject."
+        "Please select a sequence."
       );
       return;
     }
 
-    const sequenceKey =
-      getSequenceKey(sequence);
-
-    /*
-     * This is the EXACT order stored in
-     * the database for this sequence.
-     *
-     * Example:
-     * First Sequence  -> 1
-     * Second Sequence -> 2
-     *
-     * or whatever the database actually
-     * returned.
-     */
-    const sequenceOrder =
-      selectedSequence.order;
-
-    /*
-     * Debug information.
-     */
-    console.log(
-      "========== SAVING MARKS =========="
-    );
-
-    console.log({
-      classroomId: classroom,
-      subjectId: subject,
-      termId,
-      term: selectedTerm.name,
-      sequence,
-      sequenceId:
-        selectedSequence.id,
-      sequenceOrder,
-      sequenceKey,
-      databaseSequences:
-        selectedTerm.sequences,
-    });
-
-    const sequenceMarks =
-      students.map(
-        (student) => ({
-          studentId: student.id,
-
-          mark:
-            student.marks[
-              sequenceKey
-            ] === ""
-              ? null
-              : Number(
-                  student.marks[
-                    sequenceKey
-                  ]
-                ),
-        })
+    if (students.length === 0) {
+      setError(
+        "There are no students to save."
       );
+      return;
+    }
+
+    /*
+      Validate every entered score.
+    */
+
+    for (const student of students) {
+      if (student.score === "") {
+        continue;
+      }
+
+      const numericScore =
+        Number(student.score);
+
+      if (
+        Number.isNaN(
+          numericScore
+        ) ||
+        numericScore < 0 ||
+        numericScore > 20
+      ) {
+        setError(
+          `Invalid score for ${student.firstName} ${student.lastName}. Score must be between 0 and 20.`
+        );
+
+        return;
+      }
+    }
+
+    setSaving(true);
 
     try {
-      setSaving(true);
-      setError("");
-      setSuccessMessage("");
+      const payload = {
+        classroomId:
+          selectedClassroomId,
+
+        subjectId:
+          selectedSubjectId,
+
+        termId:
+          selectedTermId,
+
+        sequenceId:
+          selectedSequenceId,
+
+        students:
+          students.map(
+            (student) => ({
+              studentId:
+                student.id,
+
+              score:
+                student.score === ""
+                  ? null
+                  : Number(
+                      student.score
+                    ),
+            })
+          ),
+      };
+
+      console.log(
+        "SAVE MARKS PAYLOAD:",
+        payload
+      );
 
       const response =
         await fetch(
@@ -1186,76 +1039,30 @@ function TeacherMarksPage() {
               "Content-Type":
                 "application/json",
             },
-
-            body: JSON.stringify({
-              classroomId: classroom,
-              subjectId: subject,
-
-              /*
-               * REAL DATABASE TERM ID
-               */
-              termId,
-
-              term:
-                selectedTerm.name,
-
-              /*
-               * REAL DATABASE SEQUENCE NAME
-               */
-              sequence,
-
-              /*
-               * REAL DATABASE SEQUENCE ID
-               *
-               * The API can ignore this if it
-               * doesn't use it yet, but sending it
-               * gives the backend the exact record.
-               */
-              sequenceId:
-                selectedSequence.id,
-
-              sequenceKey,
-
-              /*
-               * REAL DATABASE SEQUENCE ORDER
-               */
-              sequenceOrder,
-
-              maxMark: 20,
-
-              students:
-                sequenceMarks,
-            }),
+            body: JSON.stringify(
+              payload
+            ),
           }
         );
 
       const data =
         await response.json();
 
-      if (!response.ok) {
-        console.error(
-          "SAVE MARKS API ERROR:",
-          {
-            status: response.status,
-            data,
-            sequence,
-            sequenceId:
-              selectedSequence.id,
-            sequenceOrder,
-            termId,
-          }
-        );
+      console.log(
+        "SAVE MARKS RESPONSE:",
+        data
+      );
 
+      if (!response.ok) {
         throw new Error(
-          data?.error ||
-            data?.message ||
-            "Failed to save marks"
+          data.error ||
+            data.message ||
+            "Failed to save marks."
         );
       }
 
-      setSuccessMessage(
-        `${sequence} for ${selectedTerm.name} saved successfully.`
-      );
+      await loadMarks();
+          setSuccess(data.message || "Marks saved successfully.");
     } catch (err) {
       console.error(
         "SAVE MARKS ERROR:",
@@ -1272,482 +1079,808 @@ function TeacherMarksPage() {
     }
   }
 
-  const enteredCount =
-    students.filter((student) => {
-      const key =
-        getSequenceKey(sequence);
+  /* =======================================================
+     FILTER STUDENTS
+  ======================================================= */
 
-      return (
-        student.marks[key] !== ""
-      );
-    }).length;
-
-  const classAverage =
+  const filteredStudents =
     useMemo(() => {
-      const averages =
-        students
-          .map((student) =>
-            calculateTermAverage(
-              student.marks
-            )
-          )
-          .filter(
-            (
-              value
-            ): value is number =>
-              value !== null
-          );
+      const query =
+        searchTerm
+          .trim()
+          .toLowerCase();
 
-      if (averages.length === 0) {
+      if (!query) {
+        return students;
+      }
+
+      return students.filter(
+        (student) => {
+          const fullName =
+            `${student.firstName} ${student.lastName}`.toLowerCase();
+
+          const matricule =
+            student.matricule
+              ?.toLowerCase() || "";
+
+          return (
+            fullName.includes(
+              query
+            ) ||
+            matricule.includes(
+              query
+            )
+          );
+        }
+      );
+    }, [
+      students,
+      searchTerm,
+    ]);
+
+  /* =======================================================
+     STATISTICS
+  ======================================================= */
+
+  const enteredCount =
+    useMemo(() => {
+      return students.filter(
+        (student) =>
+          student.score !== ""
+      ).length;
+    }, [students]);
+
+  const averageScore =
+    useMemo(() => {
+      const scoredStudents =
+        students.filter(
+          (student) =>
+            student.score !== "" &&
+            !Number.isNaN(
+              Number(student.score)
+            )
+        );
+
+      if (
+        scoredStudents.length === 0
+      ) {
         return null;
       }
 
-      return (
-        averages.reduce(
-          (sum, value) =>
-            sum + value,
+      const total =
+        scoredStudents.reduce(
+          (sum, student) =>
+            sum +
+            Number(
+              student.score
+            ),
           0
-        ) / averages.length
-      );
+        );
+
+      return (
+        total /
+        scoredStudents.length
+      ).toFixed(2);
     }, [students]);
 
-  if (loadingAssignments) {
-    return (
-      <div className="flex min-h-[400px] items-center justify-center p-6">
-        <div className="flex items-center gap-3 text-gray-500">
-          <Loader2
-            size={22}
-            className="animate-spin"
-          />
-          Loading your assigned classes...
-        </div>
-      </div>
-    );
+  /* =======================================================
+     REFRESH
+  ======================================================= */
+
+  async function handleRefresh() {
+    setError("");
+    setSuccess("");
+
+    await loadAssignments();
+    await loadTerms();
   }
 
+  /* =======================================================
+     RENDER
+  ======================================================= */
+
   return (
-    <div className="p-6">
+    <div className="min-h-screen bg-gray-50 px-4 py-6 text-gray-900 dark:bg-gray-950 dark:text-white">
       <div className="mx-auto max-w-7xl">
-        {/* HEADER */}
-        <div className="mb-8">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-              <BookOpen size={24} />
-            </div>
 
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Marks
-              </h1>
+        {/* =================================================
+            HEADER
+        ================================================= */}
 
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Enter student marks by term and sequence.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* ERROR */}
-        {error && (
-          <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-400">
-            <AlertCircle
-              size={18}
-              className="mt-0.5 shrink-0"
-            />
-
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* SUCCESS */}
-        {successMessage && (
-          <div className="mb-6 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-900/50 dark:bg-green-950/20 dark:text-green-400">
-            <Save
-              size={18}
-              className="mt-0.5 shrink-0"
-            />
-
-            <span>
-              {successMessage}
-            </span>
-          </div>
-        )}
-
-        {/* FILTERS */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {/* SECTION */}
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Section
-              </label>
-
-              <div className="flex min-h-[48px] items-center rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white">
-                {selectedClassroom?.sectionName ||
-                  "Not assigned"}
-              </div>
-            </div>
-
-            {/* CLASSROOM */}
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Classroom
-              </label>
-
-              <select
-                value={classroom}
-                onChange={(e) =>
-                  setClassroom(
-                    e.target.value
-                  )
-                }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              >
-                {assignedClassrooms.map(
-                  (item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                    >
-                      {item.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
-
-            {/* SUBJECT */}
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Subject
-              </label>
-
-              <select
-                value={subject}
-                onChange={(e) =>
-                  setSubject(
-                    e.target.value
-                  )
-                }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              >
-                {assignedSubjects.map(
-                  (item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                    >
-                      {item.name}
-                      {item.code
-                        ? ` (${item.code})`
-                        : ""}
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
-
-            {/* TERM */}
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Term
-              </label>
-
-              <select
-                value={termId}
-                onChange={(e) =>
-                  setTermId(
-                    e.target.value
-                  )
-                }
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              >
-                {terms.map((term) => (
-                  <option
-                    key={term.id}
-                    value={term.id}
-                  >
-                    {term.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* SEARCH */}
-          <div className="mt-5 max-w-md">
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Search Student
-            </label>
-
-            <div className="relative">
-              <Search
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-
-              <input
-                type="text"
-                value={search}
-                onChange={(e) =>
-                  setSearch(
-                    e.target.value
-                  )
-                }
-                placeholder="Name or matricule"
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-3 text-sm outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* MARKS */}
-        <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-          {/* TITLE */}
-          <div className="flex flex-col justify-between gap-4 border-b border-gray-200 p-6 lg:flex-row lg:items-center dark:border-gray-800">
+        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-                <Users size={21} />
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-600 text-white shadow-sm">
+                <ClipboardList size={22} />
               </div>
 
               <div>
-                <h2 className="font-semibold text-gray-900 dark:text-white">
-                  {selectedClassroom?.name ||
-                    "Classroom"}
-                </h2>
+                <h1 className="text-2xl font-bold">
+                  Enter Marks
+                </h1>
 
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {selectedSubject?.name ||
-                    "Subject"}{" "}
-                  ·{" "}
-                  {selectedTerm?.name ||
-                    "Term"}
+                  Record student scores by
+                  subject, term and sequence.
                 </p>
               </div>
             </div>
+          </div>
 
-            <div className="flex flex-wrap gap-3">
-              <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950/30 dark:text-blue-400">
-                Mark: /20
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={
+              loadingAssignments ||
+              loadingTerms ||
+              loadingMarks ||
+              saving
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
+          >
+            <RefreshCw
+              size={16}
+              className={
+                loadingAssignments ||
+                loadingTerms ||
+                loadingMarks
+                  ? "animate-spin"
+                  : ""
+              }
+            />
+
+            Refresh
+          </button>
+        </div>
+
+        {/* =================================================
+            ERROR
+        ================================================= */}
+
+        {error && (
+          <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {/* =================================================
+            SUCCESS
+        ================================================= */}
+
+        {success && (
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-300">
+            <Check size={17} />
+            {success}
+          </div>
+        )}
+
+        {/* =================================================
+            MARK SELECTION
+        ================================================= */}
+
+        <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+          <div className="mb-5 flex items-center gap-2">
+            <BookOpen
+              size={19}
+              className="text-purple-600"
+            />
+
+            <h2 className="font-semibold">
+              Mark Selection
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+            {/* =================================================
+                CLASSROOM
+            ================================================= */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Classroom
+              </label>
+
+              <div className="relative">
+                <select
+                  value={
+                    selectedClassroomId
+                  }
+                  onChange={(event) =>
+                    handleClassroomChange(
+                      event.target.value
+                    )
+                  }
+                  disabled={
+                    loadingAssignments ||
+                    classrooms.length === 0
+                  }
+                  className="w-full appearance-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 pr-9 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800"
+                >
+                  <option value="">
+                    {loadingAssignments
+                      ? "Loading classrooms..."
+                      : classrooms.length === 0
+                      ? "No classrooms"
+                      : "Select classroom"}
+                  </option>
+
+                  {classrooms.map(
+                    (classroom) => (
+                      <option
+                        key={
+                          classroom.id
+                        }
+                        value={
+                          classroom.id
+                        }
+                      >
+                        {
+                          classroom.name
+                        }
+
+                        {classroom.sectionName
+                          ? ` - ${classroom.sectionName}`
+                          : ""}
+                      </option>
+                    )
+                  )}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
               </div>
+            </div>
 
-              <div className="rounded-lg bg-purple-50 px-3 py-2 text-sm text-purple-700 dark:bg-purple-950/30 dark:text-purple-400">
-                Term Average:{" "}
-                {classAverage === null
-                  ? "—"
-                  : `${classAverage.toFixed(
-                      2
-                    )}/20`}
+            {/* =================================================
+                SUBJECT
+            ================================================= */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Subject
+              </label>
+
+              <div className="relative">
+                <select
+                  value={
+                    selectedSubjectId
+                  }
+                  onChange={(event) =>
+                    handleSubjectChange(
+                      event.target.value
+                    )
+                  }
+                  disabled={
+                    !selectedClassroomId ||
+                    subjectsForSelectedClass.length ===
+                      0
+                  }
+                  className="w-full appearance-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 pr-9 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800"
+                >
+                  <option value="">
+                    {!selectedClassroomId
+                      ? "Select classroom first"
+                      : subjectsForSelectedClass.length ===
+                        0
+                      ? "No subjects assigned"
+                      : "Select subject"}
+                  </option>
+
+                  {subjectsForSelectedClass.map(
+                    (subject) => (
+                      <option
+                        key={subject.id}
+                        value={subject.id}
+                      >
+                        {subject.name}
+
+                        {subject.code
+                          ? ` (${subject.code})`
+                          : ""}
+                      </option>
+                    )
+                  )}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+              </div>
+            </div>
+
+            {/* =================================================
+                TERM
+            ================================================= */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Term
+              </label>
+
+              <div className="relative">
+                <select
+                  value={
+                    selectedTermId
+                  }
+                  onChange={(event) =>
+                    handleTermChange(
+                      event.target.value
+                    )
+                  }
+                  disabled={
+                    loadingTerms ||
+                    terms.length === 0
+                  }
+                  className="w-full appearance-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 pr-9 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800"
+                >
+                  <option value="">
+                    {loadingTerms
+                      ? "Loading terms..."
+                      : terms.length === 0
+                      ? "No terms available"
+                      : "Select term"}
+                  </option>
+
+                  {terms.map(
+                    (term) => (
+                      <option
+                        key={term.id}
+                        value={term.id}
+                      >
+                        {term.name}
+
+                        {term.isCurrent
+                          ? " • Current"
+                          : ""}
+                      </option>
+                    )
+                  )}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+              </div>
+            </div>
+
+            {/* =================================================
+                SEQUENCE
+            ================================================= */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">
+                Sequence
+              </label>
+
+              <div className="relative">
+                <select
+                  value={
+                    selectedSequenceId
+                  }
+                  onChange={(event) =>
+                    handleSequenceChange(
+                      event.target.value
+                    )
+                  }
+                  disabled={
+                    loadingSequences ||
+                    !selectedTermId ||
+                    sequences.length === 0
+                  }
+                  className="w-full appearance-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 pr-9 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800"
+                >
+                  <option value="">
+                    {loadingSequences
+                      ? "Loading sequences..."
+                      : !selectedTermId
+                      ? "Select a term first"
+                      : sequences.length === 0
+                      ? "No sequences available"
+                      : "Select sequence"}
+                  </option>
+
+                  {sequences.map(
+                    (sequence) => (
+                      <option
+                        key={sequence.id}
+                        value={sequence.id}
+                      >
+                        {sequence.name}
+                      </option>
+                    )
+                  )}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
               </div>
             </div>
           </div>
 
-          {/* SEQUENCES */}
-          <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
-            <div className="flex flex-wrap gap-2">
-              {availableSequences.map(
-                (item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() =>
-                      setSequence(item)
-                    }
-                    className={`rounded-lg px-5 py-2.5 text-sm font-medium transition ${
-                      sequence === item
-                        ? "bg-purple-700 text-white"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    {item}
-                  </button>
-                )
+          {/* =================================================
+              SELECTION SUMMARY
+          ================================================= */}
+
+          {(selectedClassroom ||
+            selectedSubject ||
+            selectedTerm ||
+            selectedSequence) && (
+            <div className="mt-5 flex flex-wrap gap-2 border-t border-gray-100 pt-4 dark:border-gray-800">
+
+              {selectedClassroom && (
+                <span className="rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+                  {
+                    selectedClassroom.name
+                  }
+                </span>
+              )}
+
+              {selectedSubject && (
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                  {
+                    selectedSubject.name
+                  }
+                </span>
+              )}
+
+              {selectedTerm && (
+                <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+                  {selectedTerm.name}
+                </span>
+              )}
+
+              {selectedSequence && (
+                <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-300">
+                  {
+                    selectedSequence.name
+                  }
+                </span>
               )}
             </div>
+          )}
+        </div>
+
+        {/* =================================================
+            STATISTICS
+        ================================================= */}
+
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Students
+                </p>
+
+                <p className="mt-1 text-2xl font-bold">
+                  {students.length}
+                </p>
+              </div>
+
+              <Users className="text-purple-600" />
+            </div>
           </div>
 
-          {/* LOADING */}
-          {loadingStudents ||
-          loadingMarks ? (
-            <div className="flex min-h-[300px] items-center justify-center">
-              <div className="flex items-center gap-3 text-gray-500">
-                <Loader2
-                  size={22}
-                  className="animate-spin"
-                />
-                Loading students and marks...
-              </div>
-            </div>
-          ) : students.length ===
-            0 ? (
-            <div className="flex min-h-[300px] flex-col items-center justify-center px-6 text-center">
-              <Users
-                size={40}
-                className="mb-3 text-gray-400"
-              />
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Marks Entered
+                </p>
 
-              <h3 className="font-semibold text-gray-900 dark:text-white">
-                No students found
-              </h3>
+                <p className="mt-1 text-2xl font-bold">
+                  {enteredCount}
+
+                  <span className="ml-1 text-sm font-normal text-gray-400">
+                    / {students.length}
+                  </span>
+                </p>
+              </div>
+
+              <Check className="text-green-600" />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Current Average
+                </p>
+
+                <p className="mt-1 text-2xl font-bold">
+                  {averageScore !== null
+                    ? `${averageScore}/20`
+                    : "—"}
+                </p>
+              </div>
+
+              <BookOpen className="text-blue-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* =================================================
+            MARKS TABLE
+        ================================================= */}
+
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+          {/* =================================================
+              TABLE HEADER
+          ================================================= */}
+
+          <div className="flex flex-col gap-4 border-b border-gray-200 p-5 dark:border-gray-800 md:flex-row md:items-center md:justify-between">
+
+            <div>
+              <h2 className="font-semibold">
+                Student Marks
+              </h2>
 
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                There are no students in this classroom.
+                Enter one score out of 20
+                for each student.
               </p>
             </div>
-          ) : (
-            <>
-              {/* DESKTOP */}
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-800/50 dark:text-gray-400">
-                      <th className="px-6 py-4">
-                        Student
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+
+              {/* SEARCH */}
+
+              <div className="relative">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(event) =>
+                    setSearchTerm(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Search student..."
+                  className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 sm:w-64 dark:border-gray-700 dark:bg-gray-800"
+                />
+              </div>
+
+              {/* SAVE */}
+
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={
+                  saving ||
+                  loadingMarks ||
+                  students.length === 0
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? (
+                  <>
+                    <Loader2
+                      size={16}
+                      className="animate-spin"
+                    />
+
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={16} />
+
+                    Save Marks
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* =================================================
+              LOADING
+          ================================================= */}
+
+          {loadingMarks && (
+            <div className="flex min-h-[250px] items-center justify-center">
+              <div className="flex flex-col items-center gap-3 text-gray-500">
+                <Loader2
+                  size={30}
+                  className="animate-spin text-purple-600"
+                />
+
+                <p className="text-sm">
+                  Loading students and marks...
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* =================================================
+              EMPTY SELECTION
+          ================================================= */}
+
+          {!loadingMarks &&
+            (!selectedClassroomId ||
+              !selectedSubjectId ||
+              !selectedTermId ||
+              !selectedSequenceId) && (
+              <div className="flex min-h-[250px] items-center justify-center px-6">
+                <div className="text-center">
+                  <ClipboardList
+                    size={42}
+                    className="mx-auto mb-3 text-gray-300"
+                  />
+
+                  <h3 className="font-semibold">
+                    Select your mark settings
+                  </h3>
+
+                  <p className="mt-1 max-w-md text-sm text-gray-500">
+                    Choose a classroom,
+                    subject, term and
+                    sequence to load
+                    the students.
+                  </p>
+                </div>
+              </div>
+            )}
+
+          {/* =================================================
+              NO STUDENTS
+          ================================================= */}
+
+          {!loadingMarks &&
+            selectedClassroomId &&
+            selectedSubjectId &&
+            selectedTermId &&
+            selectedSequenceId &&
+            students.length === 0 && (
+              <div className="flex min-h-[250px] items-center justify-center px-6">
+                <div className="text-center">
+                  <Users
+                    size={42}
+                    className="mx-auto mb-3 text-gray-300"
+                  />
+
+                  <h3 className="font-semibold">
+                    No students found
+                  </h3>
+
+                  <p className="mt-1 max-w-md text-sm text-gray-500">
+                    There are currently no
+                    students assigned to
+                    this classroom.
+                  </p>
+                </div>
+              </div>
+            )}
+
+          {/* =================================================
+              TABLE
+          ================================================= */}
+
+          {!loadingMarks &&
+            students.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] text-left">
+
+                  <thead className="bg-gray-50 dark:bg-gray-800/60">
+                    <tr>
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        #
                       </th>
 
-                      <th className="px-4 py-4">
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         Matricule
                       </th>
 
-                      <th className="px-4 py-4 text-center">
-                        {availableSequences[0]}
-                        <br />
-                        <span className="text-[10px] normal-case">
-                          /20
-                        </span>
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Student
                       </th>
 
-                      <th className="px-4 py-4 text-center">
-                        {availableSequences[1]}
-                        <br />
-                        <span className="text-[10px] normal-case">
-                          /20
-                        </span>
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Score / 20
                       </th>
 
-                      <th className="px-4 py-4 text-center">
-                        Term Average
-                      </th>
-
-                      <th className="px-4 py-4 text-center">
-                        Position
+                      <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Status
                       </th>
                     </tr>
                   </thead>
 
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+
                     {filteredStudents.map(
-                      (student) => {
-                        const average =
-                          calculateTermAverage(
-                            student.marks
-                          );
-
-                        const position =
-                          getPosition(
-                            student.id,
-                            students
-                          );
-
-                        const first =
-                          availableSequences[0];
-
-                        const second =
-                          availableSequences[1];
+                      (
+                        student,
+                        index
+                      ) => {
+                        const hasScore =
+                          student.score !== "";
 
                         return (
                           <tr
                             key={
                               student.id
                             }
-                            className="hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                            className="transition hover:bg-gray-50/70 dark:hover:bg-gray-800/40"
                           >
-                            <td className="px-6 py-5">
-                              <p className="font-semibold text-gray-900 dark:text-white">
+
+                            <td className="px-5 py-4 text-sm text-gray-500">
+                              {index + 1}
+                            </td>
+
+                            <td className="px-5 py-4 text-sm font-medium">
+                              {student.matricule ||
+                                "—"}
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <div className="font-medium">
                                 {
-                                  student.fullName
+                                  student.firstName
+                                }{" "}
+                                {
+                                  student.lastName
                                 }
-                              </p>
+                              </div>
+
+                              {student.gender && (
+                                <div className="mt-0.5 text-xs text-gray-500">
+                                  {
+                                    student.gender
+                                  }
+                                </div>
+                              )}
                             </td>
 
-                            <td className="px-4 py-5 text-sm text-gray-500 dark:text-gray-400">
-                              {
-                                student.matricule
-                              }
-                            </td>
-
-                            <td className="px-4 py-5">
+                            <td className="px-5 py-4">
                               <input
-                                type="text"
-                                inputMode="decimal"
+                                type="number"
+                                min={0}
+                                max={20}
+                                step="0.01"
                                 value={
-                                  student
-                                    .marks
-                                    .first
+                                  student.score
                                 }
                                 onChange={(
-                                  e
+                                  event
                                 ) =>
-                                  updateMark(
+                                  updateScore(
                                     student.id,
-                                    e.target
-                                      .value,
-                                    first
+                                    event.target
+                                      .value
                                   )
                                 }
                                 placeholder="0 - 20"
-                                className="mx-auto block w-24 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-center text-sm font-medium outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                                className="w-28 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-800"
                               />
                             </td>
 
-                            <td className="px-4 py-5">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                value={
-                                  student
-                                    .marks
-                                    .second
-                                }
-                                onChange={(
-                                  e
-                                ) =>
-                                  updateMark(
-                                    student.id,
-                                    e.target
-                                      .value,
-                                    second
-                                  )
-                                }
-                                placeholder="0 - 20"
-                                className="mx-auto block w-24 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-center text-sm font-medium outline-none focus:border-purple-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                              />
-                            </td>
-
-                            <td className="px-4 py-5 text-center">
-                              <span className="font-bold text-gray-900 dark:text-white">
-                                {formatAverage(
-                                  average
-                                )}
-                              </span>
-                            </td>
-
-                            <td className="px-4 py-5 text-center">
-                              {position !==
-                              null ? (
-                                <span className="inline-flex items-center gap-1 rounded-lg bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700 dark:bg-purple-950/40 dark:text-purple-400">
-                                  <Trophy
-                                    size={
-                                      14
-                                    }
+                            <td className="px-5 py-4">
+                              {hasScore ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/30 dark:text-green-300">
+                                  <Check
+                                    size={13}
                                   />
 
-                                  {formatPosition(
-                                    position
-                                  )}
+                                  Entered
                                 </span>
                               ) : (
-                                "—"
+                                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                                  Not entered
+                                </span>
                               )}
                             </td>
                           </tr>
@@ -1756,187 +1889,50 @@ function TeacherMarksPage() {
                     )}
                   </tbody>
                 </table>
+
+                {/* SEARCH EMPTY */}
+
+                {filteredStudents.length ===
+                  0 &&
+                  students.length > 0 && (
+                    <div className="p-10 text-center text-sm text-gray-500">
+                      No students match
+                      your search.
+                    </div>
+                  )}
               </div>
+            )}
 
-              {/* MOBILE */}
-              <div className="divide-y divide-gray-200 md:hidden dark:divide-gray-800">
-                {filteredStudents.map(
-                  (student) => {
-                    const average =
-                      calculateTermAverage(
-                        student.marks
-                      );
+          {/* =================================================
+              FOOTER
+          ================================================= */}
 
-                    const position =
-                      getPosition(
-                        student.id,
-                        students
-                      );
+          {!loadingMarks &&
+            students.length > 0 && (
+              <div className="flex flex-col gap-3 border-t border-gray-200 bg-gray-50 px-5 py-4 text-sm dark:border-gray-800 dark:bg-gray-800/40 md:flex-row md:items-center md:justify-between">
 
-                    const first =
-                      availableSequences[0];
+                <p className="text-gray-500">
+                  Showing{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    {
+                      filteredStudents.length
+                    }
+                  </span>{" "}
+                  of{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    {students.length}
+                  </span>{" "}
+                  students
+                </p>
 
-                    const second =
-                      availableSequences[1];
-
-                    return (
-                      <div
-                        key={
-                          student.id
-                        }
-                        className="p-5"
-                      >
-                        <div className="mb-4 flex items-start justify-between">
-                          <div>
-                            <h3 className="font-semibold text-gray-900 dark:text-white">
-                              {
-                                student.fullName
-                              }
-                            </h3>
-
-                            <p className="text-sm text-gray-500">
-                              {
-                                student.matricule
-                              }
-                            </p>
-                          </div>
-
-                          {position !==
-                            null && (
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
-                              <Trophy
-                                size={13}
-                              />
-
-                              {formatPosition(
-                                position
-                              )}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="mb-4">
-                          <label className="mb-1 block text-xs text-gray-500">
-                            {first} /20
-                          </label>
-
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={
-                              student
-                                .marks
-                                .first
-                            }
-                            onChange={(
-                              e
-                            ) =>
-                              updateMark(
-                                student.id,
-                                e.target
-                                  .value,
-                                first
-                              )
-                            }
-                            className="w-full rounded-lg border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="mb-4">
-                          <label className="mb-1 block text-xs text-gray-500">
-                            {second} /20
-                          </label>
-
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={
-                              student
-                                .marks
-                                .second
-                            }
-                            onChange={(
-                              e
-                            ) =>
-                              updateMark(
-                                student.id,
-                                e.target
-                                  .value,
-                                second
-                              )
-                            }
-                            className="w-full rounded-lg border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800">
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-500">
-                              Term Average
-                            </span>
-
-                            <span className="font-bold">
-                              {formatAverage(
-                                average
-                              )}
-                              /20
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
+                <p className="text-gray-500">
+                  Score range:{" "}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    0 – 20
+                  </span>
+                </p>
               </div>
-            </>
-          )}
-
-          {/* SAVE */}
-          <div className="flex flex-col justify-between gap-4 border-t border-gray-200 p-6 sm:flex-row sm:items-center dark:border-gray-800">
-            <div>
-              <p className="text-sm text-gray-500">
-                {filteredStudents.length}{" "}
-                student
-                {filteredStudents.length !==
-                1
-                  ? "s"
-                  : ""}
-              </p>
-
-              <p className="mt-1 text-xs text-gray-400">
-                {enteredCount}{" "}
-                {sequence.toLowerCase()}{" "}
-                marks entered
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={
-                saving ||
-                students.length ===
-                  0 ||
-                !classroom ||
-                !subject ||
-                !termId
-              }
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? (
-                <Loader2
-                  size={18}
-                  className="animate-spin"
-                />
-              ) : (
-                <Save size={18} />
-              )}
-
-              {saving
-                ? "Sending..."
-                : `Send ${sequence} to Admin`}
-            </button>
-          </div>
+            )}
         </div>
       </div>
     </div>

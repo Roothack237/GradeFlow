@@ -1,39 +1,24 @@
+
 import prisma from "@/lib/prisma";
-import { gradeOf, remarkOf, decisionOf, round2 } from "@/lib/grading";
-import { enrolledOnly, isInactive, statusLabel } from "@/lib/student-status";
+
+import {
+  gradeOf,
+  remarkOf,
+  decisionOf,
+  round2,
+} from "@/lib/grading";
+
+import {
+  isInactive,
+  statusLabel,
+} from "@/lib/student-status";
 
 /**
- * Term report card data — built from the marks, attendance, subjects and
- * teacher assignments stored in PostgreSQL.
- *
- * This is the single place where a report card is computed, so the admin
- * generation endpoint, the PDF renderer and the admin UI all agree on the
- * numbers. The aggregation follows the logic that already existed in
- * POST /api/admin/reports/report-cards:
- *
- *   subject average = mean of the sequence averages recorded in the term
- *   term average    = Σ(subject average × coefficient) / Σ(coefficients)
- *   rank            = position of the term average inside the class,
- *                     students with the same average share the same rank
- *   decision        = PROMOTED when the average reaches the pass mark
- *
- * Nothing here invents academic values: every figure traces back to a row in
- * the database. Values that the school must configure itself (school name,
- * address, principal) live in SCHOOL_PROFILE below and are read from the
- * environment.
+ * =========================================================
+ * SCHOOL PROFILE
+ * =========================================================
  */
 
-/* =========================================================
-   SCHOOL PROFILE
-========================================================= */
-
-/**
- * Identity printed on the report card header.
- *
- * GradeFlow does not store the school's letterhead in the database yet, so it
- * is read from the environment instead of being invented. Set these variables
- * (or edit the defaults) to match the school's official report card.
- */
 export const SCHOOL_PROFILE = {
   name: process.env.SCHOOL_NAME ?? "GradeFlow Secondary School",
   motto: process.env.SCHOOL_MOTTO ?? "",
@@ -42,23 +27,47 @@ export const SCHOOL_PROFILE = {
   email: process.env.SCHOOL_EMAIL ?? "",
   ministry: process.env.SCHOOL_MINISTRY ?? "",
   principalName: process.env.SCHOOL_PRINCIPAL_NAME ?? "",
-  academicMasterName: process.env.SCHOOL_ACADEMIC_MASTER_NAME ?? "",
-  /** The logo printed in the report card header is public/images/logo.png. */
+  academicMasterName:
+    process.env.SCHOOL_ACADEMIC_MASTER_NAME ?? "",
   logoPath: "public/images/logo.png",
 };
 
-/* =========================================================
-   TYPES
-========================================================= */
+/**
+ * =========================================================
+ * TYPES
+ * =========================================================
+ *
+ * Current Mark model:
+ *
+ * Mark {
+ *   id
+ *   studentId
+ *   subjectId
+ *   teacherId
+ *   termId
+ *   sequenceId
+ *   score
+ * }
+ */
 
 export type SequenceMark = {
   sequenceId: string;
   sequenceName: string;
   order: number;
-  ca1: number | null;
-  ca2: number | null;
-  exam: number | null;
+
+  /**
+   * Actual score stored in Mark.score.
+   */
+  score: number | null;
+
+  /**
+   * Compatibility with the existing PDF renderer.
+   *
+   * For the current schema:
+   * average === score
+   */
   average: number | null;
+
   grade: string | null;
   remark: string | null;
 };
@@ -69,9 +78,19 @@ export type SubjectLine = {
   code: string;
   coefficient: number;
   teacher: string | null;
+
   sequences: SequenceMark[];
+
+  /**
+   * Average of the available sequence scores.
+   */
   average: number | null;
+
+  /**
+   * average × coefficient
+   */
   points: number | null;
+
   grade: string | null;
   remark: string | null;
 };
@@ -102,6 +121,7 @@ export type ReportCardData = {
     parentName: string | null;
     parentPhone: string | null;
   };
+
   classroom: {
     id: string;
     name: string;
@@ -109,15 +129,28 @@ export type ReportCardData = {
     academicYearId: string;
     academicYearName: string;
   };
-  term: { id: string; name: string; order: number };
-  sequences: { id: string; name: string; order: number }[];
+
+  term: {
+    id: string;
+    name: string;
+    order: number;
+  };
+
+  sequences: {
+    id: string;
+    name: string;
+    order: number;
+  }[];
+
   subjects: SubjectLine[];
+
   totals: {
     coefficients: number;
     points: number;
     average: number | null;
     grade: string | null;
   };
+
   class: {
     size: number;
     ranked: number;
@@ -126,77 +159,189 @@ export type ReportCardData = {
     lowest: number | null;
     position: number | null;
   };
+
   attendance: AttendanceSummary;
+
   marks: {
     expected: number;
     recorded: number;
     missing: number;
     complete: boolean;
   };
+
   decision: string | null;
   principalRemark: string | null;
   classTeacherRemark: string | null;
+
   reportCardId: string | null;
   pdfUrl: string | null;
+
   publication: {
     termStatus: string | null;
     published: boolean;
   };
+
   generatedAt: string;
 };
 
 export type BuildReportCardsOptions = {
   termId: string;
   classroomId?: string | null;
-  /** Include suspended / dismissed students (history). Defaults to false. */
+
+  /**
+   * Include suspended/dismissed students.
+   *
+   * Defaults to false.
+   */
   includeInactive?: boolean;
 };
 
-/* =========================================================
-   REMARKS
-========================================================= */
+/**
+ * =========================================================
+ * RE-EXPORT GRADING HELPERS
+ * =========================================================
+ */
 
-/* remarkOf() and decisionOf() live in lib/grading.ts so the seed scripts and
-   the report card generator always use the same scale. Re-exported here for
-   the callers that already import them from this module. */
 export { remarkOf, decisionOf };
 
-/* =========================================================
-   BUILD
-========================================================= */
+/**
+ * =========================================================
+ * BUILD TERM REPORT CARDS
+ * =========================================================
+ */
 
 export async function buildTermReportCards(
   options: BuildReportCardsOptions
-): Promise<{ cards: ReportCardData[]; term: { id: string; name: string } | null }> {
-  const { termId, classroomId, includeInactive = false } = options;
+): Promise<{
+  cards: ReportCardData[];
+  term: {
+    id: string;
+    name: string;
+  } | null;
+}> {
+  const {
+    termId,
+    classroomId,
+    includeInactive = false,
+  } = options;
+
+  /**
+   * -------------------------------------------------------
+   * 1. LOAD TERM
+   * -------------------------------------------------------
+   */
 
   const term = await prisma.term.findUnique({
-    where: { id: termId },
+    where: {
+      id: termId,
+    },
+
     select: {
       id: true,
       name: true,
       order: true,
-      academicYear: { select: { id: true, name: true } },
+
+      academicYear: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+
       sequences: {
-        orderBy: { order: "asc" },
-        select: { id: true, name: true, order: true },
+        orderBy: {
+          order: "asc",
+        },
+
+        select: {
+          id: true,
+          name: true,
+          order: true,
+        },
       },
     },
   });
 
-  if (!term) return { cards: [], term: null };
+  if (!term) {
+    return {
+      cards: [],
+      term: null,
+    };
+  }
 
-  const sequenceIds = term.sequences.map((sequence) => sequence.id);
+  /**
+   * All sequences belonging to the selected term.
+   *
+   * Term 1:
+   * First Sequence + Second Sequence
+   *
+   * Term 2:
+   * Third Sequence + Fourth Sequence
+   *
+   * Term 3:
+   * Fifth Sequence + Sixth Sequence
+   */
+  const sequenceIds = term.sequences.map(
+    (sequence) => sequence.id
+  );
+
+  /**
+   * If the term has no sequences, there cannot be marks.
+   */
+  if (!sequenceIds.length) {
+    return {
+      cards: [],
+      term: {
+        id: term.id,
+        name: term.name,
+      },
+    };
+  }
+
+  /**
+   * -------------------------------------------------------
+   * 2. LOAD CLASSROOMS + STUDENTS + ASSIGNMENTS
+   * -------------------------------------------------------
+   *
+   * IMPORTANT:
+   *
+   * We deliberately do NOT use enrolledOnly() here.
+   *
+   * The marks table is linked directly to Student.
+   * Therefore we must first obtain the students actually
+   * belonging to this classroom, then find their marks.
+   */
 
   const classrooms = await prisma.classroom.findMany({
-    where: classroomId ? { id: classroomId } : {},
+    where: classroomId
+      ? {
+          id: classroomId,
+          academicYearId: term.academicYear.id,
+        }
+      : {
+          academicYearId: term.academicYear.id,
+        },
+
     select: {
       id: true,
       name: true,
       academicYearId: true,
-      section: { select: { name: true } },
+
+      section: {
+        select: {
+          name: true,
+        },
+      },
+
       students: {
-        where: includeInactive ? {} : enrolledOnly(),
+        where: includeInactive
+          ? {}
+          : {
+              status: {
+                not: "DISMISSED",
+              },
+            },
+
         select: {
           id: true,
           matricule: true,
@@ -206,88 +351,340 @@ export async function buildTermReportCards(
           dateOfBirth: true,
           status: true,
           createdAt: true,
-          parent: { select: { fullName: true, phone: true } },
+
+          parent: {
+            select: {
+              fullName: true,
+              phone: true,
+            },
+          },
         },
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+
+        orderBy: [
+          {
+            lastName: "asc",
+          },
+          {
+            firstName: "asc",
+          },
+        ],
       },
+
       assignments: {
         select: {
           subjectId: true,
-          teacher: { select: { fullName: true } },
+
+          teacher: {
+            select: {
+              fullName: true,
+            },
+          },
+
           subject: {
-            select: { id: true, name: true, code: true, coefficient: true },
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              coefficient: true,
+            },
           },
         },
       },
     },
-    orderBy: { name: "asc" },
+
+    orderBy: {
+      name: "asc",
+    },
   });
 
-  if (!classrooms.length) return { cards: [], term };
+  if (!classrooms.length) {
+    return {
+      cards: [],
+      term: {
+        id: term.id,
+        name: term.name,
+      },
+    };
+  }
 
-  const classroomIds = classrooms.map((classroom) => classroom.id);
-  const studentIds = classrooms.flatMap((classroom) =>
-    classroom.students.map((student) => student.id)
+  const classroomIds = classrooms.map(
+    (classroom) => classroom.id
   );
 
-  if (!studentIds.length) return { cards: [], term };
+  const studentIds = classrooms.flatMap(
+    (classroom) =>
+      classroom.students.map(
+        (student) => student.id
+      )
+  );
 
-  const [marks, subjects, attendanceGroups, existingCards, termPublications] =
-    await Promise.all([
-      prisma.mark.findMany({
-        where: { sequenceId: { in: sequenceIds }, studentId: { in: studentIds } },
-        select: {
-          id: true,
-          studentId: true,
-          subjectId: true,
-          sequenceId: true,
-          ca1: true,
-          ca2: true,
-          exam: true,
-          average: true,
-          grade: true,
-          remark: true,
-          teacher: { select: { fullName: true } },
+  if (!studentIds.length) {
+    return {
+      cards: [],
+      term: {
+        id: term.id,
+        name: term.name,
+      },
+    };
+  }
+
+  /**
+   * -------------------------------------------------------
+   * 3. LOAD MARKS / SUBJECTS / ATTENDANCE /
+   *    REPORT CARDS / PUBLICATION
+   * -------------------------------------------------------
+   */
+
+  const [
+    marks,
+    subjects,
+    attendanceGroups,
+    existingCards,
+    termPublications,
+  ] = await Promise.all([
+    /**
+     * -----------------------------------------------------
+     * MARKS
+     * -----------------------------------------------------
+     *
+     * IMPORTANT:
+     *
+     * Current Mark model only contains:
+     *
+     * score
+     * studentId
+     * subjectId
+     * teacherId
+     * termId
+     * sequenceId
+     *
+     * Therefore we only query those fields.
+     */
+
+    prisma.mark.findMany({
+      where: {
+        termId: term.id,
+
+        sequenceId: {
+          in: sequenceIds,
         },
-      }),
 
-      prisma.subject.findMany({
-        select: { id: true, name: true, code: true, coefficient: true },
-        orderBy: { name: "asc" },
-      }),
-
-      prisma.attendance.groupBy({
-        by: ["studentId", "status"],
-        where: { sequenceId: { in: sequenceIds }, studentId: { in: studentIds } },
-        _count: { _all: true },
-      }),
-
-      prisma.reportCard.findMany({
-        where: { termId, studentId: { in: studentIds } },
-        select: {
-          id: true,
-          studentId: true,
-          average: true,
-          rank: true,
-          decision: true,
-          principalRemark: true,
-          pdfUrl: true,
+        studentId: {
+          in: studentIds,
         },
-      }),
+      },
 
-      prisma.resultPublication.findMany({
-        where: { termId, classroomId: { in: classroomIds } },
-        select: { classroomId: true, status: true },
-      }),
-    ]);
+      select: {
+        id: true,
+        studentId: true,
+        subjectId: true,
+        teacherId: true,
+        termId: true,
+        sequenceId: true,
+        score: true,
 
-  const subjectById = new Map(subjects.map((subject) => [subject.id, subject]));
-  const cardByStudent = new Map(existingCards.map((card) => [card.studentId, card]));
+        teacher: {
+          select: {
+            fullName: true,
+          },
+        },
+      },
+    }),
+
+    /**
+     * -----------------------------------------------------
+     * SUBJECTS
+     * -----------------------------------------------------
+     */
+
+    prisma.subject.findMany({
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        coefficient: true,
+      },
+
+      orderBy: {
+        name: "asc",
+      },
+    }),
+
+    /**
+     * -----------------------------------------------------
+     * ATTENDANCE
+     * -----------------------------------------------------
+     */
+
+    prisma.attendance.groupBy({
+      by: [
+        "studentId",
+        "status",
+      ],
+
+      where: {
+        sequenceId: {
+          in: sequenceIds,
+        },
+
+        studentId: {
+          in: studentIds,
+        },
+      },
+
+      _count: {
+        _all: true,
+      },
+    }),
+
+    /**
+     * -----------------------------------------------------
+     * EXISTING REPORT CARDS
+     * -----------------------------------------------------
+     */
+
+    prisma.reportCard.findMany({
+      where: {
+        termId,
+
+        studentId: {
+          in: studentIds,
+        },
+      },
+
+      select: {
+        id: true,
+        studentId: true,
+        average: true,
+        position: true,
+        decision: true,
+        principalRemark: true,
+        pdfUrl: true,
+      },
+    }),
+
+    /**
+     * -----------------------------------------------------
+     * PUBLICATION STATUS
+     * -----------------------------------------------------
+     */
+
+    prisma.resultPublication.findMany({
+      where: {
+        termId,
+
+        classroomId: {
+          in: classroomIds,
+        },
+      },
+
+      select: {
+        classroomId: true,
+        status: true,
+      },
+    }),
+  ]);
+
+  /**
+   * -------------------------------------------------------
+   * DEBUG INFORMATION
+   * -------------------------------------------------------
+   *
+   * Keep this temporarily while testing the Preview button.
+   */
+
+  console.log(
+    "========== REPORT CARD DEBUG =========="
+  );
+
+  console.log(
+    "TERM:",
+    term.id,
+    term.name
+  );
+
+  console.log(
+    "SEQUENCES:",
+    sequenceIds
+  );
+
+  console.log(
+    "CLASSROOM IDS:",
+    classroomIds
+  );
+
+  console.log(
+    "STUDENT IDS:",
+    studentIds
+  );
+
+  console.log(
+    "MARKS FOUND:",
+    marks.length
+  );
+
+  console.log(
+    "MARK SAMPLE:",
+    marks.slice(0, 10).map(
+      (mark) => ({
+        studentId: mark.studentId,
+        subjectId: mark.subjectId,
+        teacherId: mark.teacherId,
+        termId: mark.termId,
+        sequenceId: mark.sequenceId,
+        score: mark.score,
+      })
+    )
+  );
+
+  console.log(
+    "======================================="
+  );
+
+  /**
+   * -------------------------------------------------------
+   * 4. INDEX DATA
+   * -------------------------------------------------------
+   */
+
+  const subjectById = new Map(
+    subjects.map(
+      (subject) => [
+        subject.id,
+        subject,
+      ]
+    )
+  );
+
+  const cardByStudent = new Map(
+    existingCards.map(
+      (card) => [
+        card.studentId,
+        card,
+      ]
+    )
+  );
+
   const publicationByClass = new Map(
-    termPublications.map((row) => [row.classroomId, row.status])
+    termPublications.map(
+      (publication) => [
+        publication.classroomId,
+        publication.status,
+      ]
+    )
   );
 
-  /* ---- marks indexed by student → subject → sequence ---- */
+  /**
+   * -------------------------------------------------------
+   * MARKS INDEX
+   *
+   * student
+   *   ↓
+   * subject
+   *   ↓
+   * sequence
+   * -------------------------------------------------------
+   */
 
   type MarkRow = (typeof marks)[number];
 
@@ -297,229 +694,746 @@ export async function buildTermReportCards(
   >();
 
   for (const mark of marks) {
-    const perSubject =
-      marksByStudent.get(mark.studentId) ?? new Map<string, Map<string, MarkRow>>();
+    let perSubject =
+      marksByStudent.get(
+        mark.studentId
+      );
 
-    const perSequence =
-      perSubject.get(mark.subjectId) ?? new Map<string, MarkRow>();
+    if (!perSubject) {
+      perSubject = new Map();
 
-    perSequence.set(mark.sequenceId, mark);
-    perSubject.set(mark.subjectId, perSequence);
-    marksByStudent.set(mark.studentId, perSubject);
+      marksByStudent.set(
+        mark.studentId,
+        perSubject
+      );
+    }
+
+    let perSequence =
+      perSubject.get(
+        mark.subjectId
+      );
+
+    if (!perSequence) {
+      perSequence = new Map();
+
+      perSubject.set(
+        mark.subjectId,
+        perSequence
+      );
+    }
+
+    perSequence.set(
+      mark.sequenceId,
+      mark
+    );
   }
 
-  const attendanceByStudent = new Map<string, AttendanceSummary>();
+  /**
+   * -------------------------------------------------------
+   * ATTENDANCE INDEX
+   * -------------------------------------------------------
+   */
+
+  const attendanceByStudent =
+    new Map<string, AttendanceSummary>();
 
   for (const row of attendanceGroups) {
     const entry =
-      attendanceByStudent.get(row.studentId) ?? emptyAttendance();
+      attendanceByStudent.get(
+        row.studentId
+      ) ?? emptyAttendance();
 
-    entry[row.status as keyof AttendanceSummary] += row._count._all;
+    const status =
+      row.status as keyof AttendanceSummary;
 
-    attendanceByStudent.set(row.studentId, entry);
+    if (
+      status === "PRESENT" ||
+      status === "ABSENT" ||
+      status === "EXCUSED"
+    ) {
+      entry[status] += row._count._all;
+    }
+
+    if (row.status === "LATE") {
+      entry.LATE +=
+        row._count._all;
+
+      entry.lateHours +=
+        row._count._all;
+    }
+
+    attendanceByStudent.set(
+      row.studentId,
+      entry
+    );
   }
 
-  /* ---- one card per student, ranked inside the class ---- */
+  /**
+   * -------------------------------------------------------
+   * 5. BUILD ONE REPORT CARD PER STUDENT
+   * -------------------------------------------------------
+   */
 
   const cards: ReportCardData[] = [];
 
   for (const classroom of classrooms) {
-    const assignmentSubjects = new Map<
-      string,
-      { subject: (typeof subjects)[number]; teacher: string | null }
-    >();
+    /**
+     * -----------------------------------------------------
+     * SUBJECT ASSIGNMENTS FOR THIS CLASS
+     * -----------------------------------------------------
+     */
+
+    const assignmentSubjects =
+      new Map<
+        string,
+        {
+          subject: (typeof subjects)[number];
+          teacher: string | null;
+        }
+      >();
 
     for (const assignment of classroom.assignments) {
-      if (!assignmentSubjects.has(assignment.subjectId)) {
-        assignmentSubjects.set(assignment.subjectId, {
-          subject:
-            subjectById.get(assignment.subjectId) ?? assignment.subject,
-          teacher: assignment.teacher?.fullName ?? null,
-        });
+      if (
+        !assignmentSubjects.has(
+          assignment.subjectId
+        )
+      ) {
+        assignmentSubjects.set(
+          assignment.subjectId,
+          {
+            subject:
+              subjectById.get(
+                assignment.subjectId
+              ) ??
+              assignment.subject,
+
+            teacher:
+              assignment.teacher?.fullName ??
+              null,
+          }
+        );
       }
     }
 
-    const ranked: { studentId: string; average: number }[] = [];
+    /**
+     * -----------------------------------------------------
+     * STUDENTS USED FOR CLASS RANKING
+     * -----------------------------------------------------
+     */
+
+    const ranked: {
+      studentId: string;
+      average: number;
+    }[] = [];
+
     const built: ReportCardData[] = [];
+
+    /**
+     * -----------------------------------------------------
+     * EACH STUDENT
+     * -----------------------------------------------------
+     */
 
     for (const student of classroom.students) {
       const perSubject =
-        marksByStudent.get(student.id) ?? new Map<string, Map<string, MarkRow>>();
+        marksByStudent.get(
+          student.id
+        ) ??
+        new Map<
+          string,
+          Map<string, MarkRow>
+        >();
 
-      /* subjects of the class, plus any subject the student has marks for */
-      const subjectIds = new Set<string>([
-        ...assignmentSubjects.keys(),
-        ...perSubject.keys(),
-      ]);
+      /**
+       * ---------------------------------------------------
+       * SUBJECT IDS
+       * ---------------------------------------------------
+       *
+       * Include:
+       *
+       * 1. Subjects assigned to the classroom
+       * 2. Subjects for which this student has marks
+       */
+
+      const subjectIds =
+        new Set<string>([
+          ...assignmentSubjects.keys(),
+          ...perSubject.keys(),
+        ]);
 
       const lines: SubjectLine[] = [];
 
+      /**
+       * ---------------------------------------------------
+       * EACH SUBJECT
+       * ---------------------------------------------------
+       */
+
       for (const subjectId of subjectIds) {
         const info =
-          assignmentSubjects.get(subjectId) ??
+          assignmentSubjects.get(
+            subjectId
+          ) ??
           (() => {
-            const subject = subjectById.get(subjectId);
-            return subject ? { subject, teacher: null as string | null } : null;
+            const subject =
+              subjectById.get(
+                subjectId
+              );
+
+            if (!subject) {
+              return null;
+            }
+
+            return {
+              subject,
+              teacher:
+                null as string | null,
+            };
           })();
 
-        if (!info) continue;
+        if (!info) {
+          continue;
+        }
 
-        const perSequence = perSubject.get(subjectId) ?? new Map<string, MarkRow>();
+        const perSequence =
+          perSubject.get(
+            subjectId
+          ) ??
+          new Map<string, MarkRow>();
 
-        const sequenceMarks: SequenceMark[] = term.sequences.map((sequence) => {
-          const mark = perSequence.get(sequence.id);
+        /**
+         * -------------------------------------------------
+         * BUILD SEQUENCE MARKS
+         * -------------------------------------------------
+         */
 
-          return {
-            sequenceId: sequence.id,
-            sequenceName: sequence.name,
-            order: sequence.order,
-            ca1: mark?.ca1 ?? null,
-            ca2: mark?.ca2 ?? null,
-            exam: mark?.exam ?? null,
-            average: mark?.average ?? null,
-            grade: mark?.grade ?? (mark ? gradeOf(mark.average) : null),
-            remark: mark?.remark ?? null,
-          };
-        });
+        const sequenceMarks: SequenceMark[] =
+          term.sequences.map(
+            (sequence) => {
+              const mark =
+                perSequence.get(
+                  sequence.id
+                );
 
-        const recorded = sequenceMarks.filter(
-          (entry) => entry.average !== null
-        );
+              const score =
+                mark?.score ?? null;
 
-        const average = recorded.length
-          ? round2(
-              recorded.reduce((sum, entry) => sum + (entry.average ?? 0), 0) /
-                recorded.length
-            )
-          : null;
+              return {
+                sequenceId:
+                  sequence.id,
+
+                sequenceName:
+                  sequence.name,
+
+                order:
+                  sequence.order,
+
+                score,
+
+                /**
+                 * PDF compatibility.
+                 *
+                 * Current schema:
+                 * average === score
+                 */
+                average: score,
+
+                grade:
+                  score === null
+                    ? null
+                    : gradeOf(score),
+
+                remark:
+                  score === null
+                    ? null
+                    : remarkOf(score),
+              };
+            }
+          );
+
+        /**
+         * -------------------------------------------------
+         * AVAILABLE SCORES
+         * -------------------------------------------------
+         */
+
+        const recorded =
+          sequenceMarks.filter(
+            (entry) =>
+              entry.score !== null
+          );
+
+        /**
+         * -------------------------------------------------
+         * SUBJECT AVERAGE
+         * -------------------------------------------------
+         */
+
+        const average =
+          recorded.length > 0
+            ? round2(
+                recorded.reduce(
+                  (sum, entry) =>
+                    sum +
+                    (entry.score ?? 0),
+                  0
+                ) /
+                  recorded.length
+              )
+            : null;
+
+        /**
+         * -------------------------------------------------
+         * TEACHER
+         * -------------------------------------------------
+         */
 
         const teacherName =
           info.teacher ??
-          Array.from(perSequence.values()).find((entry) => entry.teacher)?.teacher
-            ?.fullName ??
+          Array.from(
+            perSequence.values()
+          ).find(
+            (entry) =>
+              entry.teacher?.fullName
+          )?.teacher?.fullName ??
           null;
+
+        /**
+         * -------------------------------------------------
+         * SUBJECT LINE
+         * -------------------------------------------------
+         */
+
+        const coefficient =
+          Number(
+            info.subject.coefficient ?? 1
+          );
 
         lines.push({
           subjectId,
-          subject: info.subject.name,
-          code: info.subject.code,
-          coefficient: info.subject.coefficient,
-          teacher: teacherName,
-          sequences: sequenceMarks,
+
+          subject:
+            info.subject.name,
+
+          code:
+            info.subject.code,
+
+          coefficient,
+
+          teacher:
+            teacherName,
+
+          sequences:
+            sequenceMarks,
+
           average,
-          points: average === null ? null : round2(average * info.subject.coefficient),
-          grade: average === null ? null : gradeOf(average),
-          remark: remarkOf(average),
+
+          points:
+            average === null
+              ? null
+              : round2(
+                  average *
+                    coefficient
+                ),
+
+          grade:
+            average === null
+              ? null
+              : gradeOf(average),
+
+          remark:
+            average === null
+              ? null
+              : remarkOf(average),
         });
       }
 
-      lines.sort((a, b) => a.subject.localeCompare(b.subject));
+      /**
+       * Sort subjects alphabetically.
+       */
 
-      const scored = lines.filter((line) => line.average !== null);
-
-      const coefficients = scored.reduce((sum, line) => sum + line.coefficient, 0);
-      const points = round2(scored.reduce((sum, line) => sum + (line.points ?? 0), 0));
-
-      const termAverage = coefficients ? round2(points / coefficients) : null;
-
-      const expected = subjectIds.size * term.sequences.length;
-      const recordedMarks = marks.filter((mark) => mark.studentId === student.id)
-        .length;
-
-      const attendance = finaliseAttendance(
-        attendanceByStudent.get(student.id) ?? emptyAttendance()
+      lines.sort(
+        (a, b) =>
+          a.subject.localeCompare(
+            b.subject
+          )
       );
 
-      const storedCard = cardByStudent.get(student.id) ?? null;
+      /**
+       * Only subjects with marks contribute
+       * to the term average.
+       */
+
+      const scored =
+        lines.filter(
+          (line) =>
+            line.average !== null
+        );
+
+      /**
+       * ---------------------------------------------------
+       * TERM WEIGHTED AVERAGE
+       * ---------------------------------------------------
+       *
+       * Σ(subject average × coefficient)
+       * ---------------------------------
+       * Σ(coefficients)
+       * ---------------------------------------------------
+       */
+
+      const coefficients =
+        scored.reduce(
+          (sum, line) =>
+            sum +
+            Number(
+              line.coefficient ?? 1
+            ),
+          0
+        );
+
+      const points =
+        round2(
+          scored.reduce(
+            (sum, line) =>
+              sum +
+              (line.points ?? 0),
+            0
+          )
+        );
+
+      const termAverage =
+        coefficients > 0
+          ? round2(
+              points /
+                coefficients
+            )
+          : null;
+
+      /**
+       * ---------------------------------------------------
+       * MARK COMPLETION
+       * ---------------------------------------------------
+       *
+       * A mark is recorded when:
+       *
+       * - it belongs to this student
+       * - it belongs to this term
+       * - it belongs to one of this term's sequences
+       */
+
+      const studentMarks =
+        marks.filter(
+          (mark) =>
+            mark.studentId ===
+              student.id &&
+            mark.termId ===
+              term.id &&
+            sequenceIds.includes(
+              mark.sequenceId
+            )
+        );
+
+      const recordedMarks =
+        studentMarks.length;
+
+      const expected =
+        subjectIds.size *
+        term.sequences.length;
+
+      const missing =
+        Math.max(
+          0,
+          expected -
+            recordedMarks
+        );
+
+      const attendance =
+        finaliseAttendance(
+          attendanceByStudent.get(
+            student.id
+          ) ??
+            emptyAttendance()
+        );
+
+      const storedCard =
+        cardByStudent.get(
+          student.id
+        ) ?? null;
+
+      /**
+       * ---------------------------------------------------
+       * BUILD REPORT CARD
+       * ---------------------------------------------------
+       */
 
       const card: ReportCardData = {
         student: {
-          id: student.id,
-          matricule: student.matricule,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          fullName: `${student.firstName} ${student.lastName}`.trim(),
-          gender: student.gender,
-          dateOfBirth: student.dateOfBirth.toISOString(),
-          status: student.status,
-          statusLabel: statusLabel(student.status),
-          enrolled: student.status === "ACTIVE",
-          parentName: student.parent?.fullName ?? null,
-          parentPhone: student.parent?.phone ?? null,
+          id:
+            student.id,
+
+          matricule:
+            student.matricule,
+
+          firstName:
+            student.firstName,
+
+          lastName:
+            student.lastName,
+
+          fullName:
+            `${student.firstName} ${student.lastName}`.trim(),
+
+          gender:
+            student.gender,
+
+          dateOfBirth:
+            student.dateOfBirth
+              ? student.dateOfBirth.toISOString()
+              : "",
+
+          status:
+            student.status,
+
+          statusLabel:
+            statusLabel(
+              student.status
+            ),
+
+          enrolled:
+            student.status ===
+            "ACTIVE",
+
+          parentName:
+            student.parent
+              ?.fullName ??
+            null,
+
+          parentPhone:
+            student.parent
+              ?.phone ??
+            null,
         },
+
         classroom: {
-          id: classroom.id,
-          name: classroom.name,
-          sectionName: classroom.section?.name ?? null,
-          academicYearId: classroom.academicYearId,
-          academicYearName: term.academicYear.name,
+          id:
+            classroom.id,
+
+          name:
+            classroom.name,
+
+          sectionName:
+            classroom.section
+              ?.name ??
+            null,
+
+          academicYearId:
+            classroom.academicYearId,
+
+          academicYearName:
+            term.academicYear.name,
         },
-        term: { id: term.id, name: term.name, order: term.order },
-        sequences: term.sequences,
-        subjects: lines,
+
+        term: {
+          id:
+            term.id,
+
+          name:
+            term.name,
+
+          order:
+            term.order,
+        },
+
+        sequences:
+          term.sequences,
+
+        subjects:
+          lines,
+
         totals: {
           coefficients,
+
           points,
-          average: termAverage,
-          grade: termAverage === null ? null : gradeOf(termAverage),
+
+          average:
+            termAverage,
+
+          grade:
+            termAverage === null
+              ? null
+              : gradeOf(
+                  termAverage
+                ),
         },
+
         class: {
-          size: classroom.students.length,
+          size:
+            classroom.students
+              .length,
+
           ranked: 0,
+
           average: null,
+
           highest: null,
+
           lowest: null,
+
           position: null,
         },
+
         attendance,
+
         marks: {
           expected,
-          recorded: recordedMarks,
-          missing: Math.max(0, expected - recordedMarks),
-          complete: recordedMarks >= expected && expected > 0,
+
+          recorded:
+            recordedMarks,
+
+          missing,
+
+          complete:
+            recordedMarks >=
+              expected &&
+            expected > 0,
         },
-        decision: storedCard?.decision ?? decisionOf(termAverage),
-        principalRemark: storedCard?.principalRemark ?? null,
-        classTeacherRemark: remarkOf(termAverage),
-        reportCardId: storedCard?.id ?? null,
-        pdfUrl: storedCard?.pdfUrl ?? null,
+
+        decision:
+          storedCard?.decision ??
+          decisionOf(
+            termAverage
+          ),
+
+        principalRemark:
+          storedCard
+            ?.principalRemark ??
+          null,
+
+        classTeacherRemark:
+          remarkOf(
+            termAverage
+          ),
+
+        reportCardId:
+          storedCard?.id ??
+          null,
+
+        pdfUrl:
+          storedCard?.pdfUrl ??
+          null,
+
         publication: {
-          termStatus: publicationByClass.get(classroom.id) ?? null,
-          published: publicationByClass.get(classroom.id) === "PUBLISHED",
+          termStatus:
+            publicationByClass.get(
+              classroom.id
+            ) ?? null,
+
+          published:
+            publicationByClass.get(
+              classroom.id
+            ) ===
+            "PUBLISHED",
         },
-        generatedAt: new Date().toISOString(),
+
+        generatedAt:
+          new Date().toISOString(),
       };
 
-      if (termAverage !== null) {
-        ranked.push({ studentId: student.id, average: termAverage });
+      /**
+       * Student participates in ranking
+       * only when a term average exists.
+       */
+
+      if (
+        termAverage !== null
+      ) {
+        ranked.push({
+          studentId:
+            student.id,
+
+          average:
+            termAverage,
+        });
       }
 
       built.push(card);
     }
 
-    /* class ranking — equal averages share the same rank */
+    /**
+     * -----------------------------------------------------
+     * 6. CLASS RANKING
+     * -----------------------------------------------------
+     *
+     * Equal averages receive the same position.
+     *
+     * Example:
+     *
+     * 18 → 1
+     * 18 → 1
+     * 16 → 3
+     */
 
-    ranked.sort((a, b) => b.average - a.average);
+    ranked.sort(
+      (a, b) =>
+        b.average -
+        a.average
+    );
 
-    const averages = ranked.map((entry) => entry.average);
+    const averages =
+      ranked.map(
+        (entry) =>
+          entry.average
+      );
 
-    const classAverage = averages.length
-      ? round2(averages.reduce((sum, value) => sum + value, 0) / averages.length)
-      : null;
+    const classAverage =
+      averages.length > 0
+        ? round2(
+            averages.reduce(
+              (sum, value) =>
+                sum + value,
+              0
+            ) /
+              averages.length
+          )
+        : null;
 
     for (const card of built) {
+      const studentAverage =
+        card.totals.average;
+
       const position =
-        card.totals.average === null
+        studentAverage === null
           ? null
-          : ranked.filter((entry) => entry.average > (card.totals.average ?? 0))
-              .length + 1;
+          : ranked.filter(
+              (entry) =>
+                entry.average >
+                studentAverage
+            ).length + 1;
 
       card.class = {
-        size: classroom.students.length,
-        ranked: ranked.length,
-        average: classAverage,
-        highest: averages.length ? Math.max(...averages) : null,
-        lowest: averages.length ? Math.min(...averages) : null,
+        size:
+          classroom.students.length,
+
+        ranked:
+          ranked.length,
+
+        average:
+          classAverage,
+
+        highest:
+          averages.length > 0
+            ? Math.max(
+                ...averages
+              )
+            : null,
+
+        lowest:
+          averages.length > 0
+            ? Math.min(
+                ...averages
+              )
+            : null,
+
         position,
       };
 
@@ -527,8 +1441,30 @@ export async function buildTermReportCards(
     }
   }
 
-  return { cards, term: { id: term.id, name: term.name } };
+  /**
+   * -------------------------------------------------------
+   * 7. RETURN
+   * -------------------------------------------------------
+   */
+
+  return {
+    cards,
+
+    term: {
+      id:
+        term.id,
+
+      name:
+        term.name,
+    },
+  };
 }
+
+/**
+ * =========================================================
+ * ATTENDANCE HELPERS
+ * =========================================================
+ */
 
 function emptyAttendance(): AttendanceSummary {
   return {
@@ -543,20 +1479,37 @@ function emptyAttendance(): AttendanceSummary {
   };
 }
 
-/** Fills the derived attendance fields after the raw counts are known. */
-export function finaliseAttendance(summary: AttendanceSummary): AttendanceSummary {
+/**
+ * Fills derived attendance fields.
+ */
+
+export function finaliseAttendance(
+  summary: AttendanceSummary
+): AttendanceSummary {
   const total =
-    summary.PRESENT + summary.ABSENT + summary.LATE + summary.EXCUSED;
+    summary.PRESENT +
+    summary.ABSENT +
+    summary.LATE +
+    summary.EXCUSED;
 
   return {
     ...summary,
+
     total,
-    rate: total
-      ? round2(((summary.PRESENT + summary.LATE) / total) * 100)
-      : null,
-    absentHours: summary.ABSENT,
-    lateHours: summary.LATE,
+
+    rate:
+      total > 0
+        ? round2(
+            (summary.PRESENT /
+              total) *
+              100
+          )
+        : null,
+
+    absentHours:
+      summary.ABSENT,
   };
 }
 
 export { isInactive };
+

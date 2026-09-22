@@ -18,7 +18,7 @@ import {
  * fabricated analysis.
  */
 
-export const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+export const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
 export function isGeminiConfigured() {
   return Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim());

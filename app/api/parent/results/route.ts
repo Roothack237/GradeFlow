@@ -64,7 +64,9 @@ export async function GET(request: Request) {
       prisma.reportCard.findMany({
         where: { studentId },
         include: { term: { select: { name: true, academicYear: { select: { name: true } } } } },
-        orderBy: { createdAt: "desc" },
+       orderBy: {
+          generatedAt: "desc",
+        },
       }),
     ]);
 
@@ -83,19 +85,20 @@ export async function GET(request: Request) {
           (mark) => mark.sequence.id === sequence.id
         );
 
-        const subjects = sequenceMarks
-          .map((mark) => ({
-            subject: mark.subject.name,
-            coefficient: mark.subject.coefficient,
-            teacher: mark.teacher.fullName,
-            ca1: mark.ca1,
-            ca2: mark.ca2,
-            exam: mark.exam,
-            average: mark.average,
-            grade: mark.grade ?? gradeOf(mark.average),
-            remark: mark.remark,
-            passed: mark.average >= PASS_MARK,
-          }))
+       const subjects = sequenceMarks
+        .map((mark) => ({
+          subject: mark.subject.name,
+          coefficient: mark.subject.coefficient ?? 1,
+          teacher: mark.teacher.fullName,
+
+          score: mark.score,
+
+          average: mark.score,
+
+          grade: gradeOf(mark.score),
+
+          passed: mark.score >= PASS_MARK,
+        }))
           .sort((a, b) => a.subject.localeCompare(b.subject));
 
         return {
@@ -104,8 +107,10 @@ export async function GET(request: Request) {
           subjects,
           average: sequenceMarks.length
             ? round2(
-                sequenceMarks.reduce((total, mark) => total + mark.average, 0) /
-                  sequenceMarks.length
+                sequenceMarks.reduce(
+                  (total, mark) => total + mark.score,
+                  0
+                ) / sequenceMarks.length
               )
             : null,
           marks: sequenceMarks.length,
@@ -120,8 +125,10 @@ export async function GET(request: Request) {
         marks: termMarks.length,
         average: termMarks.length
           ? round2(
-              termMarks.reduce((total, mark) => total + mark.average, 0) /
-                termMarks.length
+              termMarks.reduce(
+                (total, mark) => total + mark.score,
+                0
+              ) / termMarks.length
             )
           : null,
         publication: publication
@@ -140,32 +147,33 @@ export async function GET(request: Request) {
         section: student.classroom?.section.name ?? null,
       },
       terms: termResults,
-      reportCards: reportCards.map((card) => ({
-        id: card.id,
-        termId: card.termId,
-        term: `${card.term.academicYear.name} · ${card.term.name}`,
-        average: card.average,
-        rank: card.rank,
-        decision: card.decision,
-        principalRemark: card.principalRemark,
-        /* The generated PDF of this report card, served from /public. It is
-           only ever exposed once the class results are published, exactly
-           like the marks above. */
-        pdfUrl:
-          publicationByTerm.get(card.termId)?.status === "PUBLISHED"
-            ? card.pdfUrl
-            : null,
-        published: publicationByTerm.get(card.termId)?.status === "PUBLISHED",
-        createdAt: card.createdAt,
-      })),
+     reportCards: reportCards.map((card) => ({
+          id: card.id,
+          termId: card.termId,
+          term: `${card.term.academicYear.name} · ${card.term.name}`,
+          average: card.average,
+          position: card.position,
+          decision: card.decision,
+          principalRemark: card.principalRemark,
+          pdfUrl: card.pdfUrl,
+          published:
+            publicationByTerm.get(card.termId)?.status === "PUBLISHED",
+          generatedAt: card.generatedAt,
+        })),
       scale: { maxMark: 20, passMark: PASS_MARK },
     });
   } catch (error) {
-    console.error("PARENT RESULTS ERROR:", error);
+      console.error("PARENT RESULTS ERROR:", error);
 
-    return NextResponse.json(
-      { error: "Failed to load the results." },
-      { status: 500 }
-    );
-  }
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown error",
+        },
+        { status: 500 }
+      );
+    }
 }

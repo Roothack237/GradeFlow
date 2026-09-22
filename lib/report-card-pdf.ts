@@ -29,8 +29,8 @@ import {
  *   │ logo        school header (name, address, motto)      year/term   │
  *   │                  ── TERM REPORT CARD ──                           │
  *   │ student information block (name, matricule, class, parent, rank)  │
- *   │ subjects table: per sequence CA1 / CA2 / Exam / Average, then      │
- *   │                 term average, coefficient points, grade, remark    │
+ *   │ subjects table: one A/20 score per sequence, then average,         │
+ *   │                 coefficient points, grade, and appreciation       │
  *   │ term summary + class performance + attendance                      │
  *   │ remarks (class teacher, principal) + promotion decision            │
  *   │ signatures (class teacher, academic master, principal) + date      │
@@ -551,41 +551,21 @@ function drawStudentBlock(pen: Pen, card: ReportCardData, top: number) {
 type Column = { key: string; label: string; width: number; align?: "left" | "center" | "right" };
 
 function columnsFor(card: ReportCardData): Column[] {
-  const sequenceColumns = card.sequences.flatMap((sequence) => [
-    {
-      key: `${sequence.id}-ca1`,
-      label: "CA1",
-      width: 25,
-      align: "center" as const,
-    },
-    {
-      key: `${sequence.id}-ca2`,
-      label: "CA2",
-      width: 25,
-      align: "center" as const,
-    },
-    {
-      key: `${sequence.id}-exam`,
-      label: "Exam",
-      width: 27,
-      align: "center" as const,
-    },
-    {
-      key: `${sequence.id}-avg`,
-      label: "Avg",
-      width: 29,
-      align: "center" as const,
-    },
-  ]);
+  const sequenceColumns = card.sequences.map((sequence) => ({
+    key: `${sequence.id}-score`,
+    label: "A/20",
+    width: 34,
+    align: "center" as const,
+  }));
 
   const fixed: Column[] = [
     { key: "subject", label: "SUBJECT", width: 0, align: "left" },
     { key: "coefficient", label: "Coef", width: 26, align: "center" },
     ...sequenceColumns,
-    { key: "termAverage", label: "Term Avg", width: 38, align: "center" },
-    { key: "points", label: "Coef×Avg", width: 40, align: "center" },
+    { key: "termAverage", label: "Average", width: 38, align: "center" },
+    { key: "points", label: "Points", width: 40, align: "center" },
     { key: "grade", label: "Grade", width: 28, align: "center" },
-    { key: "remark", label: "Remarks", width: 0, align: "left" },
+    { key: "remark", label: "Appreciation", width: 0, align: "left" },
   ];
 
   const fixedWidth = fixed.reduce((sum, column) => sum + column.width, 0);
@@ -705,10 +685,7 @@ function subjectCells(card: ReportCardData, line: SubjectLine): Record<string, s
   };
 
   for (const sequence of line.sequences) {
-    cells[`${sequence.sequenceId}-ca1`] = mark(sequence.ca1);
-    cells[`${sequence.sequenceId}-ca2`] = mark(sequence.ca2);
-    cells[`${sequence.sequenceId}-exam`] = mark(sequence.exam);
-    cells[`${sequence.sequenceId}-avg`] = average(sequence.average);
+    cells[`${sequence.sequenceId}-score`] = mark(sequence.score);
   }
 
   return cells;

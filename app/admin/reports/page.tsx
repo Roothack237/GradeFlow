@@ -1,1731 +1,1029 @@
+
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+
 import {
-  AlertTriangle,
+  Award,
   BarChart3,
-  CalendarCheck,
-  CheckCircle2,
   Download,
   Eye,
+  FileDown,
   FileText,
-  GraduationCap,
-  Printer,
+  Loader2,
   RefreshCw,
-  School,
-  Sparkles,
-  TrendingUp,
   Users,
+  X,
 } from "lucide-react";
 
-import AdminShell from "@/components/admin/AdminShell";
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  ErrorState,
-  Field,
-  Input,
-  LoadingState,
-  PageHeader,
-  Select,
-  StatCard,
-  TableWrap,
-  Td,
-  Th,
-  Toast,
-} from "@/components/admin/ui";
+import AdminSidebar from "@/components/admin/SideBar";
+import AdminNavbar from "@/components/admin/NavBar";
 
-/* =========================================================
-   TYPES
-========================================================= */
+// =========================================================
+// TYPES
+// =========================================================
+
+type Sequence = {
+  id: string;
+  name: string;
+  order: number;
+  termId?: string;
+};
 
 type Term = {
   id: string;
   name: string;
-  isCurrent?: boolean;
-  academicYear?: { id: string; name: string };
-};
-
-type Option = { id: string; name: string };
-
-type StudentReport = {
-  type: "STUDENT";
-  term: { id: string; name: string; academicYear: { name: string } };
-  student: {
+  order?: number;
+  academicYearId?: string;
+  academicYear?: {
     id: string;
-    firstName: string;
-    lastName: string;
-    matricule: string;
-    gender: string | null;
-    status: string;
-    classroom: { id: string; name: string; section: { name: string } | null } | null;
-    parent: { fullName: string; email: string | null; phone: string | null } | null;
   };
-  subjects: {
-    id: string;
-    name: string;
-    coefficient: number;
-    teacher: string;
-    average: number | null;
-    grade: string | null;
-    sequences: {
-      sequenceName: string;
-      ca1: number;
-      ca2: number;
-      exam: number;
-      average: number;
-    }[];
-  }[];
-  summary: {
-    average: number | null;
-    grade: string | null;
-    subjects: number;
-    marks: number;
-    bestSubject: string | null;
-    weakestSubject: string | null;
-  };
-  attendance: {
-    counts: Record<string, number>;
-    total: number;
-    rate: number | null;
-  };
-  reportCard: {
-    average: number;
-    rank: number | null;
-    decision: string | null;
-    principalRemark: string | null;
-  } | null;
-};
-
-type ClassReport = {
-  type: "CLASS";
-  term: { id: string; name: string; academicYear: { name: string } };
-  classroom: {
-    id: string;
-    name: string;
-    sectionName: string | null;
-    students: number;
-  };
-  students: {
-    id: string;
-    name: string;
-    matricule: string;
-    marks: number;
-    average: number | null;
-    grade: string | null;
-    passRate: number | null;
-    attendanceRate: number | null;
-    rank: number | null;
-    decision: string | null;
-  }[];
-  subjects: {
-    id: string;
-    name: string;
-    coefficient: number;
-    recorded: number;
-    average: number | null;
-    passRate: number | null;
-  }[];
-  summary: {
-    average: number | null;
-    marks: number;
-    passRate: number | null;
-    published: number;
-  };
-};
-
-type AttendanceReport = {
-  type: "ATTENDANCE";
-  term: { id: string; name: string; academicYear: { name: string } };
-  range: { from: string | null; to: string | null };
-  summary: {
-    counts: Record<string, number>;
-    total: number;
-    rate: number | null;
-    chronicAbsence: number;
-  };
-  classes: {
-    id: string;
-    name: string;
-    sectionName: string | null;
-    counts: Record<string, number>;
-    total: number;
-    rate: number | null;
-  }[];
-  students: {
-    id: string;
-    name: string;
-    matricule: string;
-    className: string | null;
-    counts: Record<string, number>;
-    total: number;
-    rate: number | null;
-  }[];
-  days: { date: string; total: number }[];
-};
-
-type PerformanceReport = {
-  type: "PERFORMANCE";
-  term: { id: string; name: string; academicYear: { name: string } };
-  summary: {
-    classes: number;
-    subjects: number;
-    marks: number;
-    students: number;
-    average: number | null;
-    passRate: number | null;
-    strongestSubject: string | null;
-    weakestSubject: string | null;
-  };
-  classes: {
-    id: string;
-    name: string;
-    sectionName: string | null;
-    students: number;
-    assessed: number;
-    marks: number;
-    average: number | null;
-    passRate: number | null;
-  }[];
-  subjects: {
-    id: string;
-    name: string;
-    coefficient: number;
-    recorded: number;
-    average: number | null;
-    passRate: number | null;
-    highest: number | null;
-    lowest: number | null;
-  }[];
-  topStudents: {
-    id: string;
-    name: string;
-    matricule: string;
-    className: string | null;
-    average: number | null;
-    grade: string | null;
-    attendanceRate: number | null;
-  }[];
-  bottomStudents: PerformanceReport["topStudents"];
+  sequences?: Sequence[];
 };
 
 type AcademicYear = {
   id: string;
   name: string;
-  isActive: boolean;
 };
 
-type ReportCardStudentRow = {
+type Classroom = {
   id: string;
   name: string;
-  matricule: string;
-  status: string;
-  statusLabel: string;
-  enrolled: boolean;
-  parentName: string | null;
-  subjects: number;
-  marks: { expected: number; recorded: number; missing: number; complete: boolean };
-  average: number | null;
-  grade: string | null;
-  rank: number | null;
-  ranked: number;
-  decision: string | null;
-  attendanceRate: number | null;
-  reportCardId: string | null;
-  pdfUrl: string | null;
 };
 
-type ReportCardClass = {
-  term: { id: string; name: string; academicYear: string; academicYearId: string };
-  classroom: { id: string; name: string; sectionName: string | null };
-  publication: { status: string | null; published: boolean };
-  summary: {
-    students: number;
-    assessed: number;
-    withoutMarks: number;
-    incomplete: number;
-    average: number | null;
-    markCoverage: number | null;
+type StudentReport = {
+  id: string;
+  name: string;
+  average: number;
+  rank: number;
+};
+
+type ReportCardsData = {
+  classroom: {
+    id: string;
+    name: string;
   };
-  students: ReportCardStudentRow[];
+
+  term: {
+    id: string;
+    name: string;
+  };
+
+  sequence?: {
+    id: string;
+    name: string;
+  };
+
+  summary: {
+    totalStudents: number;
+    classAverage: number;
+    published: boolean;
+  };
+
+  students: StudentReport[];
+
+  publication?: {
+    published: boolean;
+  };
 };
 
-type ReportData =
-  | StudentReport
-  | ClassReport
-  | AttendanceReport
-  | PerformanceReport;
+// =========================================================
+// PAGE
+// =========================================================
 
-type Tab = "PERFORMANCE" | "CLASS" | "STUDENT" | "ATTENDANCE" | "REPORT_CARDS";
+export default function ReportCardsPage() {
+  // =======================================================
+  // STATE
+  // =======================================================
 
-/* =========================================================
-   HELPERS
-========================================================= */
-
-function toCsv(rows: (string | number | null)[][]) {
-  return rows
-    .map((row) =>
-      row
-        .map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`)
-        .join(",")
-    )
-    .join("\n");
-}
-
-function download(filename: string, csv: string) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  link.click();
-
-  URL.revokeObjectURL(url);
-}
-
-/* =========================================================
-   PAGE
-========================================================= */
-
-export default function ReportsPage() {
-  const [tab, setTab] = useState<Tab>("PERFORMANCE");
+  const [academicYears, setAcademicYears] = useState<
+    AcademicYear[]
+  >([]);
 
   const [terms, setTerms] = useState<Term[]>([]);
-  const [classes, setClasses] = useState<Option[]>([]);
-  const [students, setStudents] = useState<Option[]>([]);
 
-  const [termId, setTermId] = useState("");
-  const [classroomId, setClassroomId] = useState("");
-  const [studentId, setStudentId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [studentSearch, setStudentSearch] = useState("");
+  const [sequences, setSequences] = useState<Sequence[]>([]);
 
-  const [data, setData] = useState<ReportData | null>(null);
+  const [classes, setClasses] = useState<Classroom[]>([]);
+
+  const [selectedYear, setSelectedYear] = useState("");
+
+  const [selectedTerm, setSelectedTerm] = useState("");
+
+  const [selectedSequence, setSelectedSequence] =
+    useState("");
+
+  const [selectedClass, setSelectedClass] = useState("");
+
+  const [loadingData, setLoadingData] = useState(true);
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
 
-  const [generating, setGenerating] = useState(false);
+  const [reportCards, setReportCards] =
+    useState<ReportCardsData | null>(null);
 
-  /* report card generator (Academic Year → Class → Term → students) */
-  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
-  const [yearId, setYearId] = useState("");
-  const [reportCardClasses, setReportCardClasses] = useState<Option[]>([]);
-  const [includeInactive, setIncludeInactive] = useState(false);
-  const [reportCards, setReportCards] = useState<ReportCardClass | null>(null);
-  const [reportCardsLoading, setReportCardsLoading] = useState(false);
-  const [reportCardsError, setReportCardsError] = useState("");
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(
+    null
+  );
 
-  /* ---------------- lookups ---------------- */
+  // =======================================================
+  // LOAD INITIAL DATA
+  // =======================================================
 
   useEffect(() => {
-    async function loadLookups() {
-      try {
-        const [termsRes, classesRes, studentsRes] = await Promise.all([
-          fetch("/api/admin/terms", { cache: "no-store" }),
-          fetch("/api/admin/classes", { cache: "no-store" }),
-          fetch("/api/admin/students?page=1&pageSize=200", { cache: "no-store" }),
-        ]);
-
-        if (termsRes.ok) {
-          const termData = await termsRes.json();
-          const list: Term[] = termData.terms ?? [];
-
-          setTerms(list);
-
-          const current = list.find((term) => term.isCurrent) ?? list[0];
-
-          if (current) setTermId((value) => value || current.id);
-        }
-
-        if (classesRes.ok) {
-          const classData = await classesRes.json();
-
-          setClasses(
-            (classData.classes ?? []).map(
-              (classroom: { id: string; name: string }) => ({
-                id: classroom.id,
-                name: classroom.name,
-              })
-            )
-          );
-        }
-
-        if (studentsRes.ok) {
-          const studentData = await studentsRes.json();
-
-          setStudents(
-            (studentData.students ?? []).map(
-              (student: {
-                id: string;
-                firstName: string;
-                lastName: string;
-                matricule: string;
-              }) => ({
-                id: student.id,
-                name: `${student.firstName} ${student.lastName} — ${student.matricule}`,
-              })
-            )
-          );
-        }
-      } catch {
-        /* non critical */
-      }
-    }
-
-    loadLookups();
+    loadInitialData();
   }, []);
 
-  /* ---------------- academic years ---------------- */
+  async function loadInitialData() {
+    try {
+      setLoadingData(true);
 
-  useEffect(() => {
-    async function loadYears() {
-      try {
-        const response = await fetch("/api/admin/academic-years", {
-          cache: "no-store",
-        });
+      const [
+        yearsResponse,
+        termsResponse,
+        classesResponse,
+      ] = await Promise.all([
+        fetch("/api/admin/academic-years"),
+        fetch("/api/admin/terms"),
+        fetch("/api/admin/classes"),
+      ]);
 
-        if (!response.ok) return;
+      const yearsData = await yearsResponse.json();
+      const termsData = await termsResponse.json();
+      const classesData = await classesResponse.json();
 
-        const payload = await response.json();
-        const list: AcademicYear[] = payload.academicYears ?? [];
+      // =====================================================
+      // ACADEMIC YEARS
+      // =====================================================
 
-        setAcademicYears(list);
-
-        const active =
-          list.find((year) => year.name === "2026/2027") ??
-          list.find((year) => year.isActive) ??
-          list[0];
-
-        if (active) setYearId((value) => value || active.id);
-      } catch {
-        /* non critical */
+      if (yearsResponse.ok) {
+        setAcademicYears(
+          Array.isArray(yearsData)
+            ? yearsData
+            : yearsData.academicYears ||
+                yearsData.years ||
+                yearsData.data ||
+                []
+        );
       }
-    }
 
-    loadYears();
-  }, []);
+      // =====================================================
+      // TERMS
+      // =====================================================
 
-  /* ---------------- classes of the selected year ---------------- */
+      if (termsResponse.ok) {
+        const termList: Term[] = Array.isArray(termsData)
+          ? termsData
+          : termsData.terms ||
+            termsData.data ||
+            [];
 
-  useEffect(() => {
-    async function loadClasses() {
-      if (!yearId) return;
-
-      try {
-        const response = await fetch(
-          `/api/admin/classes?academicYearId=${encodeURIComponent(yearId)}`,
-          { cache: "no-store" }
+        /*
+         * Make sure terms are ordered correctly.
+         */
+        const normalizedTerms = [...termList].sort(
+          (a, b) => (a.order ?? 0) - (b.order ?? 0)
         );
 
-        if (!response.ok) return;
-
-        const payload = await response.json();
-
-        setReportCardClasses(
-          (payload.classes ?? []).map(
-            (classroom: { id: string; name: string }) => ({
-              id: classroom.id,
-              name: classroom.name,
-            })
-          )
+        setTerms(
+          normalizedTerms.map((term) => ({
+            ...term,
+            academicYearId:
+              term.academicYearId ?? term.academicYear?.id,
+          }))
         );
-      } catch {
-        /* non critical */
       }
+
+      // =====================================================
+      // CLASSES
+      // =====================================================
+
+      if (classesResponse.ok) {
+        const classList = Array.isArray(classesData)
+          ? classesData
+          : classesData.classes ||
+            classesData.classrooms ||
+            classesData.data ||
+            [];
+
+        setClasses(classList);
+      }
+    } catch (error) {
+      console.error(
+        "Failed to load report card data:",
+        error
+      );
+    } finally {
+      setLoadingData(false);
+    }
+  }
+
+  // =======================================================
+  // GET SEQUENCE DISPLAY NAME
+  // =======================================================
+
+  function getSequenceName(
+    termOrder: number | undefined,
+    sequenceOrder: number
+  ) {
+    /*
+     * The sequence order resets for every term:
+     *
+     * First Term:
+     *   order 1 -> First Sequence
+     *   order 2 -> Second Sequence
+     *
+     * Second Term:
+     *   order 1 -> Third Sequence
+     *   order 2 -> Fourth Sequence
+     *
+     * Third Term:
+     *   order 1 -> Fifth Sequence
+     *   order 2 -> Sixth Sequence
+     */
+
+    if (termOrder === 1) {
+      return sequenceOrder === 1
+        ? "First Sequence"
+        : "Second Sequence";
     }
 
-    loadClasses();
-  }, [yearId]);
+    if (termOrder === 2) {
+      return sequenceOrder === 1
+        ? "Third Sequence"
+        : "Fourth Sequence";
+    }
 
-  /* ---------------- load report ---------------- */
+    if (termOrder === 3) {
+      return sequenceOrder === 1
+        ? "Fifth Sequence"
+        : "Sixth Sequence";
+    }
 
-  const load = useCallback(async () => {
-    setError("");
+    return `Sequence ${sequenceOrder}`;
+  }
 
-    if (tab === "STUDENT" && !studentId) {
-      setData(null);
+  // =======================================================
+  // UPDATE SEQUENCES WHEN TERM CHANGES
+  // =======================================================
+
+  useEffect(() => {
+    /*
+     * No term selected
+     */
+    if (!selectedTerm) {
+      setSequences([]);
+      setSelectedSequence("");
       return;
     }
 
-    if (tab === "CLASS" && !classroomId) {
-      setData(null);
+    const term = terms.find(
+      (item) => item.id === selectedTerm
+    );
+
+    if (!term) {
+      setSequences([]);
+      setSelectedSequence("");
       return;
     }
 
-    if (tab === "REPORT_CARDS") {
-      setData(null);
+    /*
+     * Get the sequences belonging ONLY to the
+     * selected term.
+     */
+    const termSequences = [...(term.sequences || [])]
+      .sort((a, b) => a.order - b.order)
+      .slice(0, 2)
+      .map((sequence) => ({
+        ...sequence,
+
+        /*
+         * Keep the REAL sequence ID.
+         * Only change the displayed name.
+         */
+        name: getSequenceName(
+          term.order,
+          sequence.order
+        ),
+      }));
+
+    setSequences(termSequences);
+
+    /*
+     * A sequence from the previous term must never
+     * remain selected.
+     */
+    setSelectedSequence("");
+
+    /*
+     * Clear previous report results.
+     */
+    setReportCards(null);
+  }, [selectedTerm, terms]);
+
+  // =======================================================
+  // GENERATE REPORT CARDS
+  // =======================================================
+
+  async function loadReportCards() {
+    if (
+      !selectedYear ||
+      !selectedTerm ||
+      !selectedSequence ||
+      !selectedClass
+    ) {
+      alert(
+        "Please select an academic year, term, sequence and class."
+      );
+
       return;
     }
 
     try {
       setLoading(true);
 
-      const params = new URLSearchParams({ type: tab });
+      setReportCards(null);
 
-      if (termId) params.set("termId", termId);
-      if (tab === "STUDENT") params.set("studentId", studentId);
-      if (tab === "CLASS") params.set("classroomId", classroomId);
-      if (tab === "ATTENDANCE") {
-        if (classroomId) params.set("classroomId", classroomId);
-        if (from) params.set("from", from);
-        if (to) params.set("to", to);
-      }
-
-      const response = await fetch(`/api/admin/reports?${params}`, {
-        cache: "no-store",
+      const params = new URLSearchParams({
+        academicYearId: selectedYear,
+        termId: selectedTerm,
+        sequenceId: selectedSequence,
+        classroomId: selectedClass,
       });
 
-      const payload = await response.json().catch(() => ({}));
+      const response = await fetch(
+        `/api/admin/reports/report-cards?${params.toString()}`
+      );
+
+      const data = await response.json();
 
       if (!response.ok) {
-        setError(payload.error ?? "Unable to build this report.");
-        setData(null);
-        return;
-      }
+          throw new Error(
+            data.message ||
+              data.error ||
+              `Failed to generate report cards. Status: ${response.status}`
+          );
+        }
 
-      setData(payload as ReportData);
-    } catch {
-      setError("Unable to build this report. Please try again.");
-      setData(null);
+      setReportCards(data);
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to generate report cards."
+      );
     } finally {
       setLoading(false);
     }
-  }, [tab, termId, classroomId, studentId, from, to]);
-
-  const loadReportCards = useCallback(async () => {
-    if (!termId || !classroomId) {
-      setReportCards(null);
-      return;
-    }
-
-    try {
-      setReportCardsLoading(true);
-      setReportCardsError("");
-      setPreviewUrl("");
-
-      const params = new URLSearchParams({ termId, classroomId });
-
-      if (includeInactive) params.set("includeInactive", "true");
-
-      const response = await fetch(
-        `/api/admin/reports/report-cards?${params.toString()}`,
-        { cache: "no-store" }
-      );
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setReportCardsError(
-          payload.error ?? "Unable to load the students of this class."
-        );
-        setReportCards(null);
-        return;
-      }
-
-      setReportCards(payload as ReportCardClass);
-    } catch {
-      setReportCardsError("Unable to load the students of this class.");
-      setReportCards(null);
-    } finally {
-      setReportCardsLoading(false);
-    }
-  }, [termId, classroomId, includeInactive]);
-
-  useEffect(() => {
-    load();
-
-    /* the report card tab is loaded from the same effect, so the page keeps
-       a single data-loading effect like the rest of the admin screens */
-    if (tab === "REPORT_CARDS") loadReportCards();
-  }, [load, tab, loadReportCards]);
-
-  /* ---------------- report cards of one class ---------------- */
-
-  const pdfBase = `/api/admin/reports/report-cards/pdf?termId=${encodeURIComponent(
-    termId
-  )}&classroomId=${encodeURIComponent(classroomId)}${
-    includeInactive ? "&includeInactive=true" : ""
-  }`;
-
-  async function generateClassReportCards() {
-    if (!termId || !classroomId) {
-      setReportCardsError("Select an academic year, a class and a term first.");
-      return;
-    }
-
-    setGenerating(true);
-    setReportCardsError("");
-
-    try {
-      const response = await fetch("/api/admin/reports/report-cards", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ termId, classroomId, includeInactive }),
-      });
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setReportCardsError(
-          payload.error ?? "Unable to generate the report cards."
-        );
-        return;
-      }
-
-      setToast(payload.message ?? "Report cards generated.");
-      await loadReportCards();
-    } catch {
-      setReportCardsError("Unable to generate the report cards.");
-    } finally {
-      setGenerating(false);
-    }
   }
 
-  /* ---------------- report cards ---------------- */
+  // =======================================================
+  // PDF URL
+  // =======================================================
 
-  async function generateReportCards() {
-    if (!termId) {
-      setError("Select a term first.");
-      return;
-    }
+  function getClassPdfUrl() {
+    const params = new URLSearchParams({
+      academicYearId: selectedYear,
+      termId: selectedTerm,
+      sequenceId: selectedSequence,
+      classroomId: selectedClass,
+    });
 
-    setGenerating(true);
-
-    try {
-      const response = await fetch("/api/admin/reports/report-cards", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          termId,
-          classroomId: classroomId || undefined,
-        }),
-      });
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setError(payload.error ?? "Unable to generate the report cards.");
-        return;
-      }
-
-      setToast(payload.message ?? "Report cards generated.");
-      await load();
-    } catch {
-      setError("Unable to generate the report cards.");
-    } finally {
-      setGenerating(false);
-    }
+    return `/api/admin/reports/report-cards/pdf?${params.toString()}`;
   }
 
-  /* ---------------- export ---------------- */
+  function getStudentPdfUrl(
+    studentId: string,
+    inline = false
+  ) {
+    const params = new URLSearchParams({
+      academicYearId: selectedYear,
+      termId: selectedTerm,
+      sequenceId: selectedSequence,
+      classroomId: selectedClass,
+      studentId,
+    });
 
-  function exportCsv() {
-    if (!data) return;
-
-    if (data.type === "PERFORMANCE") {
-      download(
-        `gradeflow-performance-${data.term.name.replace(/\s+/g, "-").toLowerCase()}.csv`,
-        toCsv([
-          ["Class", "Section", "Students", "Assessed", "Marks", "Average", "Pass rate"],
-          ...data.classes.map((row) => [
-            row.name,
-            row.sectionName ?? "",
-            row.students,
-            row.assessed,
-            row.marks,
-            row.average,
-            row.passRate,
-          ]),
-          [],
-          ["Subject", "Coefficient", "Marks", "Average", "Pass rate", "Highest", "Lowest"],
-          ...data.subjects.map((row) => [
-            row.name,
-            row.coefficient,
-            row.recorded,
-            row.average,
-            row.passRate,
-            row.highest,
-            row.lowest,
-          ]),
-          [],
-          ["Top students", "Class", "Average", "Grade", "Attendance"],
-          ...data.topStudents.map((row) => [
-            row.name,
-            row.className ?? "",
-            row.average,
-            row.grade ?? "",
-            row.attendanceRate,
-          ]),
-        ])
-      );
-
-      return;
+    if (inline) {
+      params.set("inline", "1");
     }
 
-    if (data.type === "CLASS") {
-      download(
-        `gradeflow-class-${data.classroom.name.replace(/\s+/g, "-").toLowerCase()}.csv`,
-        toCsv([
-          ["Student", "Matricule", "Marks", "Average", "Grade", "Pass rate", "Attendance", "Rank", "Decision"],
-          ...data.students.map((row) => [
-            row.name,
-            row.matricule,
-            row.marks,
-            row.average,
-            row.grade ?? "",
-            row.passRate,
-            row.attendanceRate,
-            row.rank,
-            row.decision ?? "",
-          ]),
-        ])
-      );
-
-      return;
-    }
-
-    if (data.type === "ATTENDANCE") {
-      download(
-        `gradeflow-attendance-${data.term.name.replace(/\s+/g, "-").toLowerCase()}.csv`,
-        toCsv([
-          ["Student", "Matricule", "Class", "Present", "Absent", "Late", "Excused", "Total", "Rate"],
-          ...data.students.map((row) => [
-            row.name,
-            row.matricule,
-            row.className ?? "",
-            row.counts.PRESENT ?? 0,
-            row.counts.ABSENT ?? 0,
-            row.counts.LATE ?? 0,
-            row.counts.EXCUSED ?? 0,
-            row.total,
-            row.rate,
-          ]),
-        ])
-      );
-
-      return;
-    }
-
-    download(
-      `gradeflow-student-${data.student.matricule}.csv`,
-      toCsv([
-        ["Subject", "Teacher", "Coefficient", "Sequence", "CA1", "CA2", "Exam", "Average"],
-        ...data.subjects.flatMap((subject) =>
-          subject.sequences.map((sequence) => [
-            subject.name,
-            subject.teacher,
-            subject.coefficient,
-            sequence.sequenceName,
-            sequence.ca1,
-            sequence.ca2,
-            sequence.exam,
-            sequence.average,
-          ])
-        ),
-        [],
-        ["Term average", data.summary.average ?? ""],
-        ["Grade", data.summary.grade ?? ""],
-        ["Class rank", data.reportCard?.rank ?? ""],
-        ["Attendance rate", data.attendance.rate ?? ""],
-      ])
-    );
+    return `/api/admin/reports/report-cards/pdf?${params.toString()}`;
   }
 
-  const filteredStudents = useMemo(() => {
-    const term = studentSearch.trim().toLowerCase();
+  // =======================================================
+  // RESET
+  // =======================================================
 
-    if (!term) return students.slice(0, 50);
+  function resetFilters() {
+    setSelectedYear("");
+    setSelectedTerm("");
+    setSelectedSequence("");
+    setSelectedClass("");
+    setSequences([]);
+    setReportCards(null);
+  }
 
-    return students
-      .filter((student) => student.name.toLowerCase().includes(term))
-      .slice(0, 50);
-  }, [students, studentSearch]);
-
-  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "PERFORMANCE", label: "School performance", icon: <TrendingUp size={16} /> },
-    { id: "CLASS", label: "Class report", icon: <School size={16} /> },
-    { id: "STUDENT", label: "Student report", icon: <GraduationCap size={16} /> },
-    { id: "ATTENDANCE", label: "Attendance", icon: <CalendarCheck size={16} /> },
-    {
-      id: "REPORT_CARDS",
-      label: "Report cards",
-      icon: <Sparkles size={16} />,
-    },
-  ];
+  // =======================================================
+  // RENDER
+  // =======================================================
 
   return (
-    <AdminShell
-      title="Reports"
-      subtitle="Print-ready reports built from the marks and attendance stored in the database."
-    >
-      <PageHeader
-        title="Reports"
-        subtitle="School performance, class, student and attendance reports."
-      >
-        <Button variant="secondary" onClick={load} loading={loading}>
-          <RefreshCw size={16} />
-          Rebuild
-        </Button>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+      <AdminSidebar />
 
-        <Button
-          variant="secondary"
-          onClick={exportCsv}
-          disabled={!data}
-        >
-          <Download size={16} />
-          Download CSV
-        </Button>
+      <div className="lg:ml-64">
+        <AdminNavbar />
 
-        <Button variant="secondary" onClick={() => window.print()} disabled={!data}>
-          <Printer size={16} />
-          Print
-        </Button>
+        <main className="p-4 md:p-6 lg:p-8">
 
-        {tab === "REPORT_CARDS" ? null : (
-          <Button onClick={generateReportCards} loading={generating}>
-            <Sparkles size={16} />
-            Generate report cards
-          </Button>
-        )}
-      </PageHeader>
+          {/* =================================================
+              HEADER
+          ================================================= */}
 
-      {/* ---------------- filters ---------------- */}
+          <div className="mb-6">
+            <div className="flex items-center gap-3">
 
-      <Card bodyClassName="p-4" className="mb-5 print:hidden">
-        <div className="flex flex-wrap gap-2">
-          {tabs.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => setTab(entry.id)}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                tab === entry.id
-                  ? "bg-purple-700 text-white shadow-sm"
-                  : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300"
-              }`}
-            >
-              {entry.icon}
-              {entry.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-4 grid gap-3 border-t border-gray-200 pt-4 lg:grid-cols-4 dark:border-gray-800">
-          <Field label="Term">
-            <Select
-              value={termId}
-              onChange={(event) => setTermId(event.target.value)}
-            >
-              {(tab === "REPORT_CARDS" && yearId
-                ? terms.filter((term) => term.academicYear?.id === yearId)
-                : terms
-              ).map((term) => (
-                <option key={term.id} value={term.id}>
-                  {term.academicYear?.name ? `${term.academicYear.name} · ` : ""}
-                  {term.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-
-          {tab === "REPORT_CARDS" ? (
-            <>
-              <Field label="Academic year">
-                <Select
-                  value={yearId}
-                  onChange={(event) => {
-                    setYearId(event.target.value);
-                    setClassroomId("");
-                    setReportCards(null);
-                  }}
-                >
-                  <option value="">Select an academic year</option>
-                  {academicYears.map((year) => (
-                    <option key={year.id} value={year.id}>
-                      {year.name}
-                      {year.isActive ? " (active)" : ""}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-
-              <Field label="Class">
-                <Select
-                  value={classroomId}
-                  onChange={(event) => setClassroomId(event.target.value)}
-                >
-                  <option value="">Select a class</option>
-                  {reportCardClasses.map((classroom) => (
-                    <option key={classroom.id} value={classroom.id}>
-                      {classroom.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </>
-          ) : null}
-
-          {tab === "CLASS" || tab === "ATTENDANCE" ? (
-            <Field label={tab === "ATTENDANCE" ? "Class (optional)" : "Class"}>
-              <Select
-                value={classroomId}
-                onChange={(event) => setClassroomId(event.target.value)}
-              >
-                <option value="">
-                  {tab === "ATTENDANCE" ? "All classes" : "Select a class"}
-                </option>
-                {classes.map((classroom) => (
-                  <option key={classroom.id} value={classroom.id}>
-                    {classroom.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          ) : null}
-
-          {tab === "STUDENT" ? (
-            <>
-              <Field label="Find a student" className="lg:col-span-2">
-                <Input
-                  value={studentSearch}
-                  onChange={(event) => setStudentSearch(event.target.value)}
-                  placeholder="Search by name or matricule…"
-                />
-              </Field>
-
-              <Field label="Student">
-                <Select
-                  value={studentId}
-                  onChange={(event) => setStudentId(event.target.value)}
-                >
-                  <option value="">Select a student</option>
-                  {filteredStudents.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </>
-          ) : null}
-
-          {tab === "ATTENDANCE" ? (
-            <>
-              <Field label="From">
-                <Input
-                  type="date"
-                  value={from}
-                  onChange={(event) => setFrom(event.target.value)}
-                />
-              </Field>
-
-              <Field label="To">
-                <Input
-                  type="date"
-                  value={to}
-                  onChange={(event) => setTo(event.target.value)}
-                />
-              </Field>
-            </>
-          ) : null}
-        </div>
-      </Card>
-
-      {error ? (
-        <div className="mb-5">
-          <ErrorState message={error} onRetry={load} />
-        </div>
-      ) : null}
-
-      {tab === "REPORT_CARDS" ? (
-        <div className="space-y-6">
-          {reportCardsError ? (
-            <ErrorState
-              message={reportCardsError}
-              onRetry={loadReportCards}
-            />
-          ) : null}
-
-          {!yearId || !classroomId || !termId ? (
-            <Card>
-              <EmptyState
-                icon={<FileText size={20} />}
-                title="Choose the class to report on"
-                message="Academic year → class → term, then the students of that class appear below with their marks, averages and ranks. Report cards are generated per student from the marks stored in the database."
-              />
-            </Card>
-          ) : reportCardsLoading ? (
-            <Card title="Loading students">
-              <LoadingState label="Reading the marks of this class from the database…" />
-            </Card>
-          ) : !reportCards ? (
-            <Card>
-              <EmptyState
-                icon={<FileText size={20} />}
-                title="No class data"
-                message="Select another class or term."
-              />
-            </Card>
-          ) : (
-            <>
-              <Card bodyClassName="p-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="flex flex-wrap items-end gap-3">
-                    <div className="text-sm">
-                      <p className="font-semibold text-gray-900 dark:text-white">
-                        {reportCards.classroom.name} · {reportCards.term.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Academic year {reportCards.term.academicYear} ·{" "}
-                        {reportCards.summary.students} student(s) in this view
-                      </p>
-                    </div>
-
-                    <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-                      <input
-                        type="checkbox"
-                        checked={includeInactive}
-                        onChange={(event) =>
-                          setIncludeInactive(event.target.checked)
-                        }
-                        className="h-4 w-4 rounded border-gray-300 text-purple-700"
-                      />
-                      Include suspended &amp; dismissed students (history)
-                    </label>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={() =>
-                        setPreviewUrl(`${pdfBase}&inline=1`)
-                      }
-                      disabled={!reportCards.summary.assessed}
-                    >
-                      <Eye size={16} />
-                      Preview class set
-                    </Button>
-
-                    <a
-                      href={pdfBase}
-                      className={`inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 ${
-                        reportCards.summary.assessed
-                          ? ""
-                          : "pointer-events-none opacity-50"
-                      }`}
-                    >
-                      <Download size={16} />
-                      Download class PDF
-                    </a>
-
-                    <Button
-                      onClick={generateClassReportCards}
-                      loading={generating}
-                      disabled={!reportCards.summary.assessed}
-                    >
-                      <Sparkles size={16} />
-                      Generate report cards
-                    </Button>
-                  </div>
-                </div>
-
-                {!reportCards.publication.published ? (
-                  <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
-                    The results of {reportCards.classroom.name} for{" "}
-                    {reportCards.term.name} are not published yet. Report cards
-                    can be generated and printed, but parents only see them once
-                    the results are published in Results → Publications.
-                  </p>
-                ) : (
-                  <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
-                    Results are published: parents can open these report cards.
-                  </p>
-                )}
-              </Card>
-
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <StatCard
-                  label="Students in the class"
-                  value={reportCards.summary.students}
-                  icon={<Users size={20} />}
-                  tone="purple"
-                  hint={`${reportCards.summary.assessed} with marks`}
-                />
-                <StatCard
-                  label="Marks coverage"
-                  value={
-                    reportCards.summary.markCoverage === null
-                      ? "—"
-                      : `${reportCards.summary.markCoverage}%`
-                  }
-                  icon={<BarChart3 size={20} />}
-                  tone="blue"
-                  hint={`${reportCards.summary.incomplete} student(s) with gaps`}
-                />
-                <StatCard
-                  label="Class average"
-                  value={reportCards.summary.average ?? "—"}
-                  icon={<TrendingUp size={20} />}
-                  tone="emerald"
-                />
-                <StatCard
-                  label="Without marks"
-                  value={reportCards.summary.withoutMarks}
-                  icon={<AlertTriangle size={20} />}
-                  tone="amber"
-                  hint="No report card is generated for them"
-                />
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-100 dark:bg-purple-900/30">
+                <FileText className="h-6 w-6 text-purple-700 dark:text-purple-400" />
               </div>
 
-              <Card
-                title={`Students of ${reportCards.classroom.name}`}
-                description="One report card per student — generated from their own marks in PostgreSQL."
-                bodyClassName=""
-              >
-                <TableWrap>
-                  <thead>
-                    <tr>
-                      <Th>#</Th>
-                      <Th>Student</Th>
-                      <Th>Status</Th>
-                      <Th className="text-right">Marks</Th>
-                      <Th className="text-right">Average</Th>
-                      <Th className="text-right">Rank</Th>
-                      <Th>Decision</Th>
-                      <Th className="text-right">Report card</Th>
-                    </tr>
-                  </thead>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                  Report Cards
+                </h1>
 
-                  <tbody>
-                    {reportCards.students.map((student, index) => (
-                      <tr key={student.id}>
-                        <Td className="text-xs text-gray-400">{index + 1}</Td>
-                        <Td>
-                          <p className="font-semibold text-gray-900 dark:text-white">
-                            {student.name}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {student.matricule}
-                            {student.parentName
-                              ? ` · ${student.parentName}`
-                              : ""}
-                          </p>
-                        </Td>
-                        <Td>
-                          <Badge
-                            tone={
-                              student.status === "ACTIVE"
-                                ? "green"
-                                : student.status === "SUSPENDED"
-                                  ? "amber"
-                                  : student.status === "DISMISSED"
-                                    ? "red"
-                                    : "gray"
-                            }
-                          >
-                            {student.statusLabel}
-                          </Badge>
-                        </Td>
-                        <Td className="text-right text-xs">
-                          {student.marks.recorded}/{student.marks.expected}
-                          {student.marks.complete ? (
-                            <CheckCircle2
-                              size={13}
-                              className="ml-1 inline text-emerald-600"
-                            />
-                          ) : (
-                            <span className="ml-1 text-amber-600">·</span>
-                          )}
-                        </Td>
-                        <Td className="text-right font-semibold">
-                          {student.average ?? "—"}
-                        </Td>
-                        <Td className="text-right">
-                          {student.rank ? `${student.rank}/${student.ranked}` : "—"}
-                        </Td>
-                        <Td>{student.decision ?? "—"}</Td>
-                        <Td>
-                          <div className="flex items-center justify-end gap-2">
-                            {student.marks.recorded === 0 ? (
-                              <span className="text-xs text-gray-400">
-                                No marks
-                              </span>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setPreviewUrl(
-                                      `${pdfBase}&studentId=${student.id}&inline=1`
-                                    )
-                                  }
-                                  className="rounded-lg p-2 text-gray-500 transition hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950/40"
-                                  title={`Preview ${student.name}'s report card`}
-                                >
-                                  <Eye size={16} />
-                                </button>
-
-                                <a
-                                  href={`${pdfBase}&studentId=${student.id}`}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
-                                  title={`Download ${student.name}'s report card`}
-                                >
-                                  <Download size={14} />
-                                  Download
-                                </a>
-                              </>
-                            )}
-                          </div>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </TableWrap>
-
-                <div className="border-t border-gray-200 px-5 py-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-                  Already stored: {reportCards.students.filter((student) => student.reportCardId).length}{" "}
-                  of {reportCards.students.length} report card(s) for{" "}
-                  {reportCards.term.name}.
-                </div>
-              </Card>
-
-              {previewUrl ? (
-                <Card
-                  title="Report card preview"
-                  description="This is the exact document that is downloaded and printed."
-                  bodyClassName="p-4"
-                >
-                  <iframe
-                    key={previewUrl}
-                    src={previewUrl}
-                    title="Report card preview"
-                    className="h-[760px] w-full rounded-xl border border-gray-200 dark:border-gray-800"
-                  />
-
-                  <div className="mt-3 flex justify-end">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setPreviewUrl("")}
-                    >
-                      Close preview
-                    </Button>
-                  </div>
-                </Card>
-              ) : null}
-            </>
-          )}
-        </div>
-      ) : loading ? (
-        <Card title="Building the report">
-          <LoadingState label="Building the report from the database…" />
-        </Card>
-      ) : !data ? (
-        <Card>
-          <EmptyState
-            icon={<FileText size={20} />}
-            title="No report selected"
-            message={
-              tab === "STUDENT"
-                ? "Pick a student to build their term report."
-                : tab === "CLASS"
-                  ? "Pick a class to build its term report."
-                  : "Choose a term to build the report."
-            }
-          />
-        </Card>
-      ) : data.type === "PERFORMANCE" ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              label="School average"
-              value={data.summary.average ?? "—"}
-              icon={<BarChart3 size={20} />}
-              tone="purple"
-            />
-            <StatCard
-              label="Pass rate"
-              value={`${data.summary.passRate ?? 0}%`}
-              icon={<TrendingUp size={20} />}
-              tone="emerald"
-            />
-            <StatCard
-              label="Students assessed"
-              value={data.summary.students}
-              icon={<Users size={20} />}
-              tone="blue"
-            />
-            <StatCard
-              label="Marks"
-              value={data.summary.marks}
-              icon={<FileText size={20} />}
-              tone="amber"
-              hint={`${data.summary.classes} class(es) · ${data.summary.subjects} subject(s)`}
-            />
-          </div>
-
-          <Card
-            title={`Class performance — ${data.term.name} (${data.term.academicYear.name})`}
-          >
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Class</Th>
-                  <Th className="text-right">Students</Th>
-                  <Th className="text-right">Assessed</Th>
-                  <Th className="text-right">Marks</Th>
-                  <Th className="text-right">Average</Th>
-                  <Th className="text-right">Pass rate</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.classes.map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">
-                      {row.name}
-                      {row.sectionName ? (
-                        <span className="ml-2 text-xs text-gray-400">
-                          {row.sectionName}
-                        </span>
-                      ) : null}
-                    </Td>
-                    <Td className="text-right">{row.students}</Td>
-                    <Td className="text-right">{row.assessed}</Td>
-                    <Td className="text-right">{row.marks}</Td>
-                    <Td className="text-right font-semibold">{row.average ?? "—"}</Td>
-                    <Td className="text-right">{row.passRate ?? "—"}%</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-
-          <Card title="Subject performance">
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Subject</Th>
-                  <Th className="text-right">Coefficient</Th>
-                  <Th className="text-right">Marks</Th>
-                  <Th className="text-right">Average</Th>
-                  <Th className="text-right">Pass rate</Th>
-                  <Th className="text-right">Highest</Th>
-                  <Th className="text-right">Lowest</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.subjects.map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">{row.name}</Td>
-                    <Td className="text-right">{row.coefficient}</Td>
-                    <Td className="text-right">{row.recorded}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.average ?? "—"}
-                    </Td>
-                    <Td className="text-right">{row.passRate ?? "—"}%</Td>
-                    <Td className="text-right">{row.highest ?? "—"}</Td>
-                    <Td className="text-right">{row.lowest ?? "—"}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-
-          <Card title="Top students">
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Student</Th>
-                  <Th>Class</Th>
-                  <Th className="text-right">Average</Th>
-                  <Th className="text-right">Grade</Th>
-                  <Th className="text-right">Attendance</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.topStudents.map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">
-                      {row.name}
-                      <span className="ml-2 font-mono text-[11px] text-gray-400">
-                        {row.matricule}
-                      </span>
-                    </Td>
-                    <Td className="text-sm">{row.className ?? "—"}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.average ?? "—"}
-                    </Td>
-                    <Td className="text-right">{row.grade ?? "—"}</Td>
-                    <Td className="text-right">
-                      {row.attendanceRate ?? "—"}%
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-        </div>
-      ) : data.type === "CLASS" ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              label="Class average"
-              value={data.summary.average ?? "—"}
-              icon={<School size={20} />}
-              tone="purple"
-            />
-            <StatCard
-              label="Pass rate"
-              value={`${data.summary.passRate ?? 0}%`}
-              icon={<TrendingUp size={20} />}
-              tone="emerald"
-            />
-            <StatCard
-              label="Students"
-              value={data.classroom.students}
-              icon={<Users size={20} />}
-              tone="blue"
-            />
-            <StatCard
-              label="Marks recorded"
-              value={data.summary.marks}
-              icon={<FileText size={20} />}
-              tone="amber"
-              hint={
-                data.summary.published
-                  ? "Results published"
-                  : "Results not published"
-              }
-            />
-          </div>
-
-          <Card
-            title={`${data.classroom.name} — ${data.term.name}`}
-            description={
-              data.classroom.sectionName
-                ? `${data.classroom.sectionName} section`
-                : undefined
-            }
-          >
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Student</Th>
-                  <Th className="text-right">Marks</Th>
-                  <Th className="text-right">Average</Th>
-                  <Th className="text-right">Grade</Th>
-                  <Th className="text-right">Attendance</Th>
-                  <Th className="text-right">Rank</Th>
-                  <Th>Decision</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.students.map((row, index) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">
-                      {index + 1}. {row.name}
-                      <span className="ml-2 font-mono text-[11px] text-gray-400">
-                        {row.matricule}
-                      </span>
-                    </Td>
-                    <Td className="text-right">{row.marks}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.average ?? "—"}
-                    </Td>
-                    <Td className="text-right">{row.grade ?? "—"}</Td>
-                    <Td className="text-right">
-                      {row.attendanceRate ?? "—"}%
-                    </Td>
-                    <Td className="text-right">{row.rank ?? "—"}</Td>
-                    <Td>
-                      {row.decision ? (
-                        <Badge
-                          tone={row.decision === "PROMOTED" ? "green" : "amber"}
-                        >
-                          {row.decision.toLowerCase()}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-gray-400">
-                          Not generated
-                        </span>
-                      )}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-
-          <Card title="Subject averages for this class">
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Subject</Th>
-                  <Th className="text-right">Coefficient</Th>
-                  <Th className="text-right">Marks</Th>
-                  <Th className="text-right">Average</Th>
-                  <Th className="text-right">Pass rate</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.subjects.map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">{row.name}</Td>
-                    <Td className="text-right">{row.coefficient}</Td>
-                    <Td className="text-right">{row.recorded}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.average ?? "—"}
-                    </Td>
-                    <Td className="text-right">{row.passRate ?? "—"}%</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-        </div>
-      ) : data.type === "ATTENDANCE" ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              label="Attendance rate"
-              value={`${data.summary.rate ?? 0}%`}
-              icon={<CalendarCheck size={20} />}
-              tone="purple"
-            />
-            <StatCard
-              label="Records"
-              value={data.summary.total}
-              icon={<FileText size={20} />}
-              tone="blue"
-            />
-            <StatCard
-              label="Absences"
-              value={data.summary.counts.ABSENT ?? 0}
-              icon={<Users size={20} />}
-              tone="amber"
-            />
-            <StatCard
-              label="Below 75% attendance"
-              value={data.summary.chronicAbsence}
-              icon={<TrendingUp size={20} />}
-              tone={data.summary.chronicAbsence ? "red" : "gray"}
-            />
-          </div>
-
-          <Card title={`Attendance by class — ${data.term.name}`}>
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Class</Th>
-                  <Th className="text-right">Present</Th>
-                  <Th className="text-right">Absent</Th>
-                  <Th className="text-right">Late</Th>
-                  <Th className="text-right">Excused</Th>
-                  <Th className="text-right">Rate</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.classes.map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">{row.name}</Td>
-                    <Td className="text-right">{row.counts.PRESENT ?? 0}</Td>
-                    <Td className="text-right">{row.counts.ABSENT ?? 0}</Td>
-                    <Td className="text-right">{row.counts.LATE ?? 0}</Td>
-                    <Td className="text-right">{row.counts.EXCUSED ?? 0}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.rate ?? "—"}%
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-
-          <Card title="Students with the lowest attendance">
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Student</Th>
-                  <Th>Class</Th>
-                  <Th className="text-right">Absent</Th>
-                  <Th className="text-right">Late</Th>
-                  <Th className="text-right">Records</Th>
-                  <Th className="text-right">Rate</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.students.slice(0, 25).map((row) => (
-                  <tr key={row.id}>
-                    <Td className="font-medium">
-                      {row.name}
-                      <span className="ml-2 font-mono text-[11px] text-gray-400">
-                        {row.matricule}
-                      </span>
-                    </Td>
-                    <Td className="text-sm">{row.className ?? "—"}</Td>
-                    <Td className="text-right">{row.counts.ABSENT ?? 0}</Td>
-                    <Td className="text-right">{row.counts.LATE ?? 0}</Td>
-                    <Td className="text-right">{row.total}</Td>
-                    <Td className="text-right font-semibold">
-                      {row.rate ?? "—"}%
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          </Card>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              label="Term average"
-              value={data.summary.average ?? "—"}
-              icon={<BarChart3 size={20} />}
-              tone="purple"
-              hint={`Grade ${data.summary.grade ?? "—"}`}
-            />
-            <StatCard
-              label="Attendance rate"
-              value={`${data.attendance.rate ?? 0}%`}
-              icon={<CalendarCheck size={20} />}
-              tone="emerald"
-            />
-            <StatCard
-              label="Class rank"
-              value={data.reportCard?.rank ?? "—"}
-              icon={<Users size={20} />}
-              tone="blue"
-              hint={data.reportCard?.decision ?? "Report card not generated yet"}
-            />
-            <StatCard
-              label="Subjects"
-              value={data.summary.subjects}
-              icon={<FileText size={20} />}
-              tone="amber"
-              hint={`${data.summary.marks} mark(s) recorded`}
-            />
-          </div>
-
-          <Card
-            title={`${data.student.firstName} ${data.student.lastName} — ${data.term.name}`}
-            description={`${data.student.matricule} · ${
-              data.student.classroom?.name ?? "No class"
-            }${data.student.classroom?.section ? ` · ${data.student.classroom.section.name}` : ""}${
-              data.student.parent ? ` · Parent: ${data.student.parent.fullName}` : ""
-            }`}
-          >
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Subject</Th>
-                  <Th>Teacher</Th>
-                  <Th className="text-right">Coeff.</Th>
-                  <Th>Sequence</Th>
-                  <Th className="text-right">CA1</Th>
-                  <Th className="text-right">CA2</Th>
-                  <Th className="text-right">Exam</Th>
-                  <Th className="text-right">Average</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.subjects.flatMap((subject) =>
-                  subject.sequences.map((sequence, index) => (
-                    <tr key={`${subject.id}-${sequence.sequenceName}`}>
-                      <Td className="font-medium">
-                        {index === 0 ? subject.name : ""}
-                      </Td>
-                      <Td className="text-xs text-gray-500">
-                        {index === 0 ? subject.teacher : ""}
-                      </Td>
-                      <Td className="text-right">
-                        {index === 0 ? subject.coefficient : ""}
-                      </Td>
-                      <Td className="text-sm">{sequence.sequenceName}</Td>
-                      <Td className="text-right">{sequence.ca1}</Td>
-                      <Td className="text-right">{sequence.ca2}</Td>
-                      <Td className="text-right">{sequence.exam}</Td>
-                      <Td className="text-right font-semibold">
-                        {sequence.average}
-                      </Td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </TableWrap>
-          </Card>
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card title="Subject averages">
-              <div className="space-y-3">
-                {data.subjects.map((subject) => (
-                  <div
-                    key={subject.id}
-                    className="flex items-center justify-between rounded-xl border border-gray-200 p-3 dark:border-gray-800"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                        {subject.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Coefficient {subject.coefficient} · {subject.teacher}
-                      </p>
-                    </div>
-
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-900 dark:text-white">
-                        {subject.average ?? "—"}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {subject.grade ?? "—"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card title="Attendance detail">
-              <div className="grid grid-cols-2 gap-3">
-                {["PRESENT", "ABSENT", "LATE", "EXCUSED"].map((status) => (
-                  <div
-                    key={status}
-                    className="rounded-xl border border-gray-200 p-3 dark:border-gray-800"
-                  >
-                    <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      {status.toLowerCase()}
-                    </p>
-                    <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">
-                      {data.attendance.counts[status] ?? 0}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 rounded-xl bg-purple-50 p-3 text-sm text-purple-900 dark:bg-purple-950/30 dark:text-purple-200">
-                Best subject: <strong>{data.summary.bestSubject ?? "—"}</strong>
-                <br />
-                Subject to improve:{" "}
-                <strong>{data.summary.weakestSubject ?? "—"}</strong>
-              </div>
-
-              {data.reportCard?.principalRemark ? (
-                <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-                  {data.reportCard.principalRemark}
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Generate and manage student report cards.
                 </p>
-              ) : null}
-            </Card>
+              </div>
+
+            </div>
           </div>
+
+          {/* =================================================
+              FILTER CARD
+          ================================================= */}
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Generate Report Cards
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Select the academic year, term, sequence and
+                class.
+              </p>
+            </div>
+
+            {loadingData ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-purple-600" />
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+                  {/* =================================================
+                      ACADEMIC YEAR
+                  ================================================= */}
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Academic Year
+                    </label>
+
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => {
+                        setSelectedYear(e.target.value);
+                        setSelectedTerm("");
+                        setSelectedSequence("");
+                        setSequences([]);
+                        setReportCards(null);
+                      }}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    >
+                      <option value="">
+                        Select Academic Year
+                      </option>
+
+                      {academicYears.map((year) => (
+                        <option
+                          key={year.id}
+                          value={year.id}
+                        >
+                          {year.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* =================================================
+                      TERM
+                  ================================================= */}
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Term
+                    </label>
+
+                    <select
+                      value={selectedTerm}
+                      onChange={(e) => {
+                        setSelectedTerm(e.target.value);
+                        setSelectedSequence("");
+                        setSequences([]);
+                        setReportCards(null);
+                      }}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    >
+                      <option value="">
+                        Select Term
+                      </option>
+
+                      {terms
+                        .filter(
+                          (term) =>
+                            !selectedYear ||
+                            term.academicYearId === selectedYear
+                        )
+                        .map((term) => (
+                        <option
+                          key={term.id}
+                          value={term.id}
+                        >
+                          {term.name}
+                        </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* =================================================
+                      SEQUENCE
+                  ================================================= */}
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Sequence
+                    </label>
+
+                    <select
+                      value={selectedSequence}
+                      onChange={(e) => {
+                        setSelectedSequence(
+                          e.target.value
+                        );
+
+                        setReportCards(null);
+                      }}
+                      disabled={!selectedTerm}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:disabled:bg-gray-900"
+                    >
+                      <option value="">
+                        {!selectedTerm
+                          ? "Select Term First"
+                          : sequences.length === 0
+                          ? "No Sequences"
+                          : "Select Sequence"}
+                      </option>
+
+                      {sequences.map((sequence) => (
+                        <option
+                          key={sequence.id}
+                          value={sequence.id}
+                        >
+                          {sequence.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* =================================================
+                      CLASS
+                  ================================================= */}
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Class
+                    </label>
+
+                    <select
+                      value={selectedClass}
+                      onChange={(e) => {
+                        setSelectedClass(e.target.value);
+                        setReportCards(null);
+                      }}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    >
+                      <option value="">
+                        Select Class
+                      </option>
+
+                      {classes.map((classroom) => (
+                        <option
+                          key={classroom.id}
+                          value={classroom.id}
+                        >
+                          {classroom.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                </div>
+
+                {/* =================================================
+                    BUTTONS
+                ================================================= */}
+
+                <div className="mt-5 flex flex-wrap gap-3">
+
+                  <button
+                    onClick={loadReportCards}
+                    disabled={loading}
+                    className="inline-flex items-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="h-4 w-4" />
+                        Generate Report Cards
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={resetFilters}
+                    className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Reset
+                  </button>
+
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* =================================================
+              EMPTY STATE
+          ================================================= */}
+
+          {!reportCards && !loading && (
+            <div className="mt-6 rounded-2xl border border-dashed border-gray-300 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-900">
+
+              <FileText className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-700" />
+
+              <h3 className="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
+                No Report Cards Generated
+              </h3>
+
+              <p className="mx-auto mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">
+                Select an academic year, term, sequence and
+                class, then generate the report cards.
+              </p>
+
+            </div>
+          )}
+
+          {/* =================================================
+              RESULTS
+          ================================================= */}
+
+          {reportCards && (
+            <div className="mt-6 space-y-6">
+
+              {/* =================================================
+                  CLASS HEADER
+              ================================================= */}
+
+              <div className="flex flex-col justify-between gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm md:flex-row md:items-center dark:border-gray-800 dark:bg-gray-900">
+
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                    {reportCards.classroom.name}
+                  </h2>
+
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {reportCards.term.name}
+
+                    {reportCards.sequence?.name
+                      ? ` • ${reportCards.sequence.name}`
+                      : ""}
+                  </p>
+                </div>
+
+                <a
+                  href={getClassPdfUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white hover:bg-purple-800"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Download Full Class PDF
+                </a>
+
+              </div>
+
+              {/* =================================================
+                  STATISTICS
+              ================================================= */}
+
+              <div className="grid gap-4 md:grid-cols-3">
+
+                {/* Total Students */}
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+                  <div className="flex items-center justify-between">
+
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Total Students
+                      </p>
+
+                      <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+                        {reportCards.summary.totalStudents}
+                      </p>
+                    </div>
+
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/30">
+                      <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    </div>
+
+                  </div>
+
+                </div>
+
+                {/* Average */}
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+                  <div className="flex items-center justify-between">
+
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Class Average
+                      </p>
+
+                      <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+                        {Number(
+                          reportCards.summary.classAverage
+                        ).toFixed(2)}
+                        %
+                      </p>
+                    </div>
+
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-100 dark:bg-purple-900/30">
+                      <BarChart3 className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                    </div>
+
+                  </div>
+
+                </div>
+
+                {/* Publication */}
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+                  <div className="flex items-center justify-between">
+
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Publication Status
+                      </p>
+
+                      <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+                        {(
+                          reportCards.publication
+                            ?.published ??
+                          reportCards.summary.published
+                        )
+                          ? "Published"
+                          : "Not Published"}
+                      </p>
+                    </div>
+
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 dark:bg-green-900/30">
+                      <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+              {/* =================================================
+                  STUDENT TABLE
+              ================================================= */}
+
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+                <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+
+                  <h2 className="font-semibold text-gray-900 dark:text-white">
+                    Student Report Cards
+                  </h2>
+
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Preview or download individual report
+                    cards.
+                  </p>
+
+                </div>
+
+                <div className="overflow-x-auto">
+
+                  <table className="w-full min-w-[700px]">
+
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
+
+                        <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          #
+                        </th>
+
+                        <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Student
+                        </th>
+
+                        <th className="px-5 py-4 text-center text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Average
+                        </th>
+
+                        <th className="px-5 py-4 text-center text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Rank
+                        </th>
+
+                        <th className="px-5 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Actions
+                        </th>
+
+                      </tr>
+                    </thead>
+
+                    <tbody>
+
+                      {reportCards.students.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="px-5 py-12 text-center text-sm text-gray-500"
+                          >
+                            No students found for this
+                            class.
+                          </td>
+                        </tr>
+                      ) : (
+                        reportCards.students.map(
+                          (student, index) => (
+                            <tr
+                              key={student.id}
+                              className="border-b border-gray-100 last:border-0 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-950"
+                            >
+
+                              <td className="px-5 py-4 text-sm text-gray-500">
+                                {index + 1}
+                              </td>
+
+                              <td className="px-5 py-4">
+                                <p className="font-medium text-gray-900 dark:text-white">
+                                  {student.name}
+                                </p>
+                              </td>
+
+                              <td className="px-5 py-4 text-center">
+                                <span className="font-semibold text-gray-900 dark:text-white">
+                                  {Number(
+                                    student.average
+                                  ).toFixed(2)}
+                                  %
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4 text-center">
+
+                                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-sm font-semibold text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+
+                                  <Award className="h-3.5 w-3.5" />
+
+                                  {student.rank}
+
+                                </span>
+
+                              </td>
+
+                              <td className="px-5 py-4">
+
+                                <div className="flex justify-end gap-2">
+
+                                  {/* Preview */}
+
+                                  <button
+                                    onClick={() =>
+                                      setPreviewUrl(
+                                        getStudentPdfUrl(
+                                          student.id,
+                                          true
+                                        )
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                    Preview
+                                  </button>
+
+                                  {/* Download */}
+
+                                  <a
+                                    href={getStudentPdfUrl(
+                                      student.id
+                                    )}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-purple-700 px-3 py-2 text-xs font-medium text-white hover:bg-purple-800"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                    Download
+                                  </a>
+
+                                </div>
+
+                              </td>
+
+                            </tr>
+                          )
+                        )
+                      )}
+
+                    </tbody>
+
+                  </table>
+
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+        </main>
+      </div>
+
+      {/* =====================================================
+          PDF PREVIEW
+      ===================================================== */}
+
+      {previewUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+
+          <div className="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+
+            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+
+              <div>
+                <h2 className="font-semibold text-gray-900 dark:text-white">
+                  Report Card Preview
+                </h2>
+
+                <p className="text-xs text-gray-500">
+                  Preview before downloading
+                </p>
+              </div>
+
+              <button
+                onClick={() => setPreviewUrl(null)}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+            </div>
+
+            <div className="flex-1 bg-gray-100 dark:bg-gray-950">
+
+              <iframe
+                src={previewUrl}
+                title="Report Card Preview"
+                className="h-full w-full"
+              />
+
+            </div>
+
+          </div>
+
         </div>
       )}
 
-      {toast ? <Toast message={toast} onClose={() => setToast("")} /> : null}
-    </AdminShell>
+    </div>
   );
 }

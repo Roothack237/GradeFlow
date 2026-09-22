@@ -1,120 +1,115 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
 import { auth } from "@/auth";
-import prisma from "@/lib/prisma";
-import { notifyAdmins } from "@/lib/notifications";
+import prisma  from "@/lib/prisma";
 
-type SequenceName =
-  | "First Sequence"
-  | "Second Sequence"
-  | "Third Sequence"
-  | "Fourth Sequence"
-  | "Fifth Sequence"
-  | "Sixth Sequence";
+type SaveStudentMark = {
+  studentId: string;
+  score: number | null;
+};
 
-async function getTeacherFromSession() {
+type SaveMarksBody = {
+  classroomId: string;
+  subjectId: string;
+  termId: string;
+  sequenceId: string;
+  students: SaveStudentMark[];
+};
+
+/*
+ * ---------------------------------------------------------
+ * GET
+ * ---------------------------------------------------------
+ *
+ * Returns:
+ *
+ * {
+ *   students: [...],
+ *   marks: [...]
+ * }
+ *
+ * Query parameters:
+ *
+ * classroomId
+ * subjectId
+ * termId
+ * sequenceId
+ */
+export async function GET(
+  request: NextRequest
+) {
   try {
-    console.log("========== TEACHER MARKS AUTH START ==========");
+    /*
+     * -------------------------------------------------------
+     * AUTHENTICATION
+     * -------------------------------------------------------
+     */
 
     const session = await auth();
 
-    console.log(
-      "========== TEACHER MARKS AUTH RESULT ==========",
-      session
-    );
-
-    const email = session?.user?.email;
-
-    console.log(
-      "========== TEACHER MARKS EMAIL ==========",
-      email
-    );
-
-    if (!email) {
-      console.log(
-        "TEACHER MARKS: No email found in session"
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+        },
+        {
+          status: 401,
+        }
       );
-
-      return null;
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email,
-      },
-      include: {
-        teacher: true,
-      },
-    });
-
-    console.log(
-      "========== TEACHER MARKS DATABASE USER ==========",
-      user
-        ? {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            hasTeacher: !!user.teacher,
-          }
-        : null
-    );
-
-    if (
-      !user ||
-      user.role !== "TEACHER" ||
-      !user.teacher
-    ) {
-      console.log(
-        "TEACHER MARKS: Teacher account not found"
+    /*
+     * Only teachers can use this endpoint.
+     */
+    if (session.user.role !== "TEACHER") {
+      return NextResponse.json(
+        {
+          error:
+            "Only teachers can access marks.",
+        },
+        {
+          status: 403,
+        }
       );
-
-      return null;
     }
 
-    console.log(
-      "========== TEACHER MARKS TEACHER FOUND ==========",
-      user.teacher.id
+    /*
+     * -------------------------------------------------------
+     * GET TEACHER
+     * -------------------------------------------------------
+     *
+     * The logged-in session contains User.id.
+     *
+     * Teacher.userId -> User.id
+     */
+    const teacher = await prisma.teacher.findUnique(
+      {
+        where: {
+          userId: session.user.id,
+        },
+      }
     );
-
-    return user.teacher;
-  } catch (error) {
-    console.error(
-      "========== TEACHER MARKS AUTH ERROR =========="
-    );
-
-    console.error(error);
-
-    if (error instanceof Error) {
-      console.error("MESSAGE:", error.message);
-      console.error("STACK:", error.stack);
-    }
-
-    throw error;
-  }
-}
-
-/*
-|--------------------------------------------------------------------------
-| GET MARKS
-|--------------------------------------------------------------------------
-*/
-
-export async function GET(request: Request) {
-  try {
-    const teacher = await getTeacherFromSession();
 
     if (!teacher) {
       return NextResponse.json(
         {
           error:
-            "Teacher session not found or teacher account does not exist.",
+            "Teacher profile was not found.",
         },
-        { status: 401 }
+        {
+          status: 404,
+        }
       );
     }
 
-    const teacherId = teacher.id;
+    /*
+     * -------------------------------------------------------
+     * READ QUERY PARAMETERS
+     * -------------------------------------------------------
+     */
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams } =
+      new URL(request.url);
 
     const classroomId =
       searchParams.get("classroomId");
@@ -125,33 +120,80 @@ export async function GET(request: Request) {
     const termId =
       searchParams.get("termId");
 
-    if (
-      !classroomId ||
-      !subjectId ||
-      !termId
-    ) {
+    const sequenceId =
+      searchParams.get("sequenceId");
+
+    if (!classroomId) {
       return NextResponse.json(
         {
           error:
-            "classroomId, subjectId and termId are required",
+            "classroomId is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!subjectId) {
+      return NextResponse.json(
+        {
+          error:
+            "subjectId is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!termId) {
+      return NextResponse.json(
+        {
+          error: "termId is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!sequenceId) {
+      return NextResponse.json(
+        {
+          error:
+            "sequenceId is required.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     /*
-     * Verify that this teacher is assigned
-     * to this classroom and subject.
+     * -------------------------------------------------------
+     * VERIFY TEACHER ASSIGNMENT
+     * -------------------------------------------------------
+     *
+     * A teacher can only enter marks for a classroom +
+     * subject combination that has actually been assigned
+     * to them.
      */
-
     const assignment =
-      await prisma.teacherAssignment.findFirst({
-        where: {
-          teacherId,
-          classroomId,
-          subjectId,
-        },
-      });
+      await prisma.teacherAssignment.findFirst(
+        {
+          where: {
+            teacherId: teacher.id,
+            classroomId,
+            subjectId,
+          },
+
+          include: {
+            classroom: true,
+            subject: true,
+          },
+        }
+      );
 
     if (!assignment) {
       return NextResponse.json(
@@ -159,48 +201,92 @@ export async function GET(request: Request) {
           error:
             "You are not assigned to this classroom and subject.",
         },
-        { status: 403 }
+        {
+          status: 403,
+        }
       );
     }
 
     /*
-     * Get the selected term and
-     * its sequences.
+     * -------------------------------------------------------
+     * VERIFY TERM
+     * -------------------------------------------------------
      */
 
-    const term =
-      await prisma.term.findUnique({
+    const term = await prisma.term.findUnique(
+      {
         where: {
           id: termId,
         },
-        include: {
-          sequences: {
-            orderBy: {
-              order: "asc",
-            },
-          },
-        },
-      });
+      }
+    );
 
     if (!term) {
       return NextResponse.json(
         {
-          error: "Term not found",
+          error: "Term not found.",
         },
-        { status: 404 }
+        {
+          status: 404,
+        }
       );
     }
 
     /*
-     * Get students in classroom.
+     * -------------------------------------------------------
+     * VERIFY SEQUENCE
+     * -------------------------------------------------------
+     *
+     * A sequence must belong to the selected term.
      */
+    const sequence =
+      await prisma.sequence.findUnique({
+        where: {
+          id: sequenceId,
+        },
+      });
 
+    if (!sequence) {
+      return NextResponse.json(
+        {
+          error:
+            "Sequence not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    if (sequence.termId !== termId) {
+      return NextResponse.json(
+        {
+          error:
+            "The selected sequence does not belong to the selected term.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * -------------------------------------------------------
+     * LOAD STUDENTS
+     * -------------------------------------------------------
+     *
+     * Current schema:
+     *
+     * Student.classroomId
+     *
+     * Therefore we load students directly by classroomId.
+     */
     const students =
       await prisma.student.findMany({
         where: {
           classroomId,
-          status: "ACTIVE",
         },
+
         orderBy: [
           {
             lastName: "asc",
@@ -209,83 +295,102 @@ export async function GET(request: Request) {
             firstName: "asc",
           },
         ],
+
+        select: {
+          id: true,
+          matricule: true,
+          firstName: true,
+          lastName: true,
+          gender: true,
+          classroomId: true,
+        },
       });
 
     /*
-     * Get marks for the selected term.
+     * -------------------------------------------------------
+     * LOAD EXISTING MARKS
+     * -------------------------------------------------------
+     *
+     * Only marks for:
+     *
+     * teacher
+     * classroom students
+     * subject
+     * term
+     * sequence
+     *
+     * are returned.
      */
+    const studentIds =
+      students.map(
+        (student) => student.id
+      );
 
     const marks =
-      await prisma.mark.findMany({
-        where: {
-          teacherId,
-          subjectId,
-          sequence: {
-            termId: term.id,
-          },
-          student: {
-            classroomId,
-          },
-        },
-        include: {
-          sequence: true,
-        },
-      });
+      studentIds.length > 0
+        ? await prisma.mark.findMany({
+            where: {
+              teacherId: teacher.id,
+              subjectId,
+              termId,
+              sequenceId,
+
+              studentId: {
+                in: studentIds,
+              },
+            },
+
+            select: {
+              id: true,
+              studentId: true,
+              subjectId: true,
+              teacherId: true,
+              termId: true,
+              sequenceId: true,
+              score: true,
+            },
+          })
+        : [];
+
+    /*
+     * -------------------------------------------------------
+     * RESPONSE
+     * -------------------------------------------------------
+     */
 
     return NextResponse.json({
+      success: true,
+
+      classroom: {
+        id: assignment.classroom.id,
+        name: assignment.classroom.name,
+      },
+
+      subject: {
+        id: assignment.subject.id,
+        name: assignment.subject.name,
+        code: assignment.subject.code,
+        coefficient:
+          assignment.subject.coefficient,
+      },
+
       term: {
         id: term.id,
         name: term.name,
+        order: term.order,
+        isCurrent: term.isCurrent,
       },
 
-      sequences: term.sequences.map(
-        (sequence) => ({
-          id: sequence.id,
-          name: sequence.name,
-          order: sequence.order,
-        })
-      ),
+      sequence: {
+        id: sequence.id,
+        name: sequence.name,
+        order: sequence.order,
+        termId: sequence.termId,
+      },
 
       students,
 
-      marks: marks.map(
-        (mark) => ({
-          id: mark.id,
-
-          studentId:
-            mark.studentId,
-
-          subjectId:
-            mark.subjectId,
-
-          sequenceId:
-            mark.sequenceId,
-
-          average:
-            mark.average,
-
-          ca1:
-            mark.ca1,
-
-          ca2:
-            mark.ca2,
-
-          exam:
-            mark.exam,
-
-          grade:
-            mark.grade,
-
-          remark:
-            mark.remark,
-
-          sequence:
-            mark.sequence.name,
-
-          sequenceName:
-            mark.sequence.name,
-        })
-      ),
+      marks,
     });
   } catch (error) {
     console.error(
@@ -296,173 +401,222 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Failed to load marks",
-
-        details:
+          "Failed to load marks.",
+        message:
           error instanceof Error
             ? error.message
-            : String(error),
+            : "Unknown server error.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
 
 /*
-|--------------------------------------------------------------------------
-| SAVE MARKS
-|--------------------------------------------------------------------------
-*/
-
-export async function POST(request: Request) {
+ * ---------------------------------------------------------
+ * POST
+ * ---------------------------------------------------------
+ *
+ * Saves or updates marks.
+ *
+ * Body:
+ *
+ * {
+ *   classroomId: "...",
+ *   subjectId: "...",
+ *   termId: "...",
+ *   sequenceId: "...",
+ *   students: [
+ *     {
+ *       studentId: "...",
+ *       score: 15.5
+ *     }
+ *   ]
+ * }
+ */
+export async function POST(
+  request: NextRequest
+) {
   try {
-    const teacher =
-      await getTeacherFromSession();
+    /*
+     * -------------------------------------------------------
+     * AUTHENTICATION
+     * -------------------------------------------------------
+     */
+
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized.",
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    /*
+     * Only teachers can save marks.
+     */
+    if (session.user.role !== "TEACHER") {
+      return NextResponse.json(
+        {
+          error:
+            "Only teachers can save marks.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    /*
+     * -------------------------------------------------------
+     * GET TEACHER
+     * -------------------------------------------------------
+     */
+
+    const teacher = await prisma.teacher.findUnique(
+      {
+        where: {
+          userId: session.user.id,
+        },
+      }
+    );
 
     if (!teacher) {
       return NextResponse.json(
         {
           error:
-            "Teacher session not found or teacher account does not exist.",
+            "Teacher profile was not found.",
         },
-        { status: 401 }
+        {
+          status: 404,
+        }
       );
     }
 
-    const teacherId = teacher.id;
+    /*
+     * -------------------------------------------------------
+     * PARSE REQUEST
+     * -------------------------------------------------------
+     */
 
-    const body = await request.json();
+    let body: SaveMarksBody;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid JSON request body.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     const {
       classroomId,
       subjectId,
       termId,
-      term,
-      sequence,
-      sequenceKey,
-      sequenceOrder,
+      sequenceId,
       students,
-    } = body as {
-      classroomId?: string;
-
-      subjectId?: string;
-
-      termId?: string;
-
-      term?: string;
-
-      sequence?: SequenceName;
-
-      sequenceKey?: string;
-
-      sequenceOrder?: number;
-
-      students?: {
-        studentId: string;
-        mark: number | string | null;
-      }[];
-    };
-
-    console.log(
-      "========== SAVE MARKS REQUEST =========="
-    );
-
-    console.log({
-      teacherId,
-      classroomId,
-      subjectId,
-      termId,
-      term,
-      sequence,
-      sequenceKey,
-      sequenceOrder,
-      studentsCount:
-        students?.length,
-    });
+    } = body;
 
     /*
-     * Validate required fields.
+     * -------------------------------------------------------
+     * BASIC VALIDATION
+     * -------------------------------------------------------
      */
 
-    if (
-      !classroomId ||
-      !subjectId ||
-      !termId ||
-      !Array.isArray(students)
-    ) {
+    if (!classroomId) {
       return NextResponse.json(
         {
           error:
-            "classroomId, subjectId, termId and students are required",
+            "classroomId is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * sequenceKey can be something like:
-     *
-     * "first"
-     * "second"
-     *
-     * We DO NOT use sequenceKey to identify
-     * the database sequence.
-     *
-     * We use the actual sequence name:
-     *
-     * "First Sequence"
-     * "Second Sequence"
-     * etc.
-     */
-
-    const validSequences: SequenceName[] = [
-      "First Sequence",
-      "Second Sequence",
-      "Third Sequence",
-      "Fourth Sequence",
-      "Fifth Sequence",
-      "Sixth Sequence",
-    ];
-
-    if (
-      !sequence ||
-      !validSequences.includes(sequence)
-    ) {
-      console.log(
-        "INVALID SEQUENCE RECEIVED:",
-        sequence
-      );
-
+    if (!subjectId) {
       return NextResponse.json(
         {
-          error: "Invalid sequence.",
-
-          receivedSequence:
-            sequence ?? null,
-
-          receivedSequenceKey:
-            sequenceKey ?? null,
-
-          validSequences,
+          error:
+            "subjectId is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!termId) {
+      return NextResponse.json(
+        {
+          error:
+            "termId is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!sequenceId) {
+      return NextResponse.json(
+        {
+          error:
+            "sequenceId is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!Array.isArray(students)) {
+      return NextResponse.json(
+        {
+          error:
+            "students must be an array.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     /*
-     * Verify teacher assignment.
+     * -------------------------------------------------------
+     * VERIFY TEACHER ASSIGNMENT
+     * -------------------------------------------------------
      */
 
     const assignment =
-      await prisma.teacherAssignment.findFirst({
-        where: {
-          teacherId,
-          classroomId,
-          subjectId,
-        },
-      });
+      await prisma.teacherAssignment.findFirst(
+        {
+          where: {
+            teacherId: teacher.id,
+            classroomId,
+            subjectId,
+          },
+
+          include: {
+            classroom: true,
+            subject: true,
+          },
+        }
+      );
 
     if (!assignment) {
       return NextResponse.json(
@@ -470,173 +624,86 @@ export async function POST(request: Request) {
           error:
             "You are not assigned to this classroom and subject.",
         },
-        { status: 403 }
+        {
+          status: 403,
+        }
       );
     }
 
     /*
-     * Get selected term WITH its sequences.
-     *
-     * This is important because we want to
-     * find the exact sequence belonging to
-     * this term.
+     * -------------------------------------------------------
+     * VERIFY TERM
+     * -------------------------------------------------------
      */
 
-    const selectedTerm =
-      await prisma.term.findUnique({
+    const term = await prisma.term.findUnique(
+      {
         where: {
           id: termId,
         },
-        include: {
-          sequences: {
-            orderBy: {
-              order: "asc",
-            },
-          },
-        },
-      });
+      }
+    );
 
-    /*
-     * Fallback using term name if necessary.
-     */
-
-    let finalTerm = selectedTerm;
-
-    if (!finalTerm && term) {
-      finalTerm =
-        await prisma.term.findFirst({
-          where: {
-            name: term,
-          },
-          include: {
-            sequences: {
-              orderBy: {
-                order: "asc",
-              },
-            },
-          },
-        });
-    }
-
-    if (!finalTerm) {
+    if (!term) {
       return NextResponse.json(
         {
           error: "Term not found.",
-          termId,
-          termName: term ?? null,
         },
-        { status: 404 }
+        {
+          status: 404,
+        }
       );
     }
 
-    console.log(
-      "========== SELECTED TERM =========="
-    );
-
-    console.log({
-      id: finalTerm.id,
-
-      name: finalTerm.name,
-
-      sequences:
-        finalTerm.sequences.map(
-          (item) => ({
-            id: item.id,
-            name: item.name,
-            order: item.order,
-          })
-        ),
-    });
-
     /*
-     * Find the exact sequence BY NAME.
-     *
-     * We no longer guess the sequence
-     * using sequenceOrder.
-     *
-     * The database already knows which
-     * sequences belong to this term.
+     * -------------------------------------------------------
+     * VERIFY SEQUENCE
+     * -------------------------------------------------------
      */
 
-    const selectedSequenceRecord =
-      finalTerm.sequences.find(
-        (item) =>
-          item.name === sequence
-      );
+    const sequence =
+      await prisma.sequence.findUnique({
+        where: {
+          id: sequenceId,
+        },
+      });
 
-    console.log(
-      "========== SELECTED SEQUENCE =========="
-    );
-
-    console.log({
-      requestedSequence:
-        sequence,
-
-      requestedSequenceKey:
-        sequenceKey,
-
-      requestedSequenceOrder:
-        sequenceOrder,
-
-      foundSequence:
-        selectedSequenceRecord
-          ? {
-              id:
-                selectedSequenceRecord.id,
-
-              name:
-                selectedSequenceRecord.name,
-
-              order:
-                selectedSequenceRecord.order,
-            }
-          : null,
-    });
-
-    if (!selectedSequenceRecord) {
+    if (!sequence) {
       return NextResponse.json(
         {
           error:
-            `${sequence} was not found for ${finalTerm.name}.`,
-
-          requestedSequence:
-            sequence,
-
-          availableSequences:
-            finalTerm.sequences.map(
-              (item) => ({
-                id: item.id,
-
-                name: item.name,
-
-                order: item.order,
-              })
-            ),
+            "Sequence not found.",
         },
-        { status: 400 }
+        {
+          status: 404,
+        }
+      );
+    }
+
+    if (sequence.termId !== termId) {
+      return NextResponse.json(
+        {
+          error:
+            "The selected sequence does not belong to the selected term.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
     /*
-     * Verify students.
+     * -------------------------------------------------------
+     * LOAD CLASSROOM STUDENTS
+     * -------------------------------------------------------
+     *
+     * This gives us the authoritative list of students
+     * belonging to this classroom.
      */
-
-    const studentIds =
-      students.map(
-        (student) =>
-          student.studentId
-      );
-
-    const validStudents =
+    const classroomStudents =
       await prisma.student.findMany({
         where: {
-          id: {
-            in: studentIds,
-          },
-
           classroomId,
-
-          status: "ACTIVE",
         },
 
         select: {
@@ -644,267 +711,309 @@ export async function POST(request: Request) {
         },
       });
 
-    const validStudentIds =
+    const classroomStudentIds =
       new Set(
-        validStudents.map(
-          (student) =>
-            student.id
+        classroomStudents.map(
+          (student) => student.id
         )
       );
 
-    for (const student of students) {
+    /*
+     * -------------------------------------------------------
+     * VALIDATE EVERY MARK
+     * -------------------------------------------------------
+     */
+
+    for (const studentMark of students) {
+      if (!studentMark?.studentId) {
+        return NextResponse.json(
+          {
+            error:
+              "Every mark must contain a studentId.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      /*
+       * Prevent a teacher from submitting marks for a
+       * student who isn't in the selected classroom.
+       */
       if (
-        !validStudentIds.has(
-          student.studentId
+        !classroomStudentIds.has(
+          studentMark.studentId
         )
       ) {
         return NextResponse.json(
           {
             error:
-              `Invalid student: ${student.studentId}`,
+              "One or more students do not belong to the selected classroom.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
-    }
 
-    /*
-     * Save marks.
-     */
-
-    let savedCount = 0;
-
-    for (const student of students) {
       /*
-       * Skip empty marks.
+       * null means remove/clear the mark.
        */
-
-      if (
-        student.mark === null ||
-        student.mark === undefined ||
-        student.mark === ""
-      ) {
+      if (studentMark.score === null) {
         continue;
       }
 
-      const numericMark =
-        Number(student.mark);
-
-      /*
-       * Validate number.
-       */
-
       if (
-        Number.isNaN(
-          numericMark
+        typeof studentMark.score !==
+        "number" ||
+        !Number.isFinite(
+          studentMark.score
         )
       ) {
         return NextResponse.json(
           {
             error:
-              `Invalid mark for student ${student.studentId}`,
+              "Scores must be valid numbers.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
 
-      /*
-       * Validate range.
-       */
-
       if (
-        numericMark < 0 ||
-        numericMark > 20
+        studentMark.score < 0 ||
+        studentMark.score > 20
       ) {
         return NextResponse.json(
           {
             error:
-              "Mark must be between 0 and 20.",
+              "Scores must be between 0 and 20.",
           },
-          { status: 400 }
+          {
+            status: 400,
+          }
         );
       }
+    }
 
-      /*
-       * Create or update mark.
-       */
+    /*
+     * -------------------------------------------------------
+     * REMOVE DUPLICATE STUDENTS FROM REQUEST
+     * -------------------------------------------------------
+     */
 
-      await prisma.mark.upsert({
-        where: {
-          studentId_subjectId_sequenceId:
-            {
+    const uniqueStudents =
+      Array.from(
+        new Map(
+          students.map((student) => [
+            student.studentId,
+            student,
+          ])
+        ).values()
+      );
+
+    /*
+     * -------------------------------------------------------
+     * SAVE INSIDE A TRANSACTION
+     * -------------------------------------------------------
+     *
+     * Each mark is:
+     *
+     * studentId
+     * subjectId
+     * teacherId
+     * termId
+     * sequenceId
+     * score
+     *
+     * No CA1.
+     * No CA2.
+     * No exam.
+     * No average.
+     * No grade.
+     * No remark.
+     */
+    await prisma.$transaction(
+      async (tx) => {
+        for (const studentMark of uniqueStudents) {
+          /*
+           * -------------------------------------------------
+           * CLEAR MARK
+           * -------------------------------------------------
+           *
+           * An empty score from the frontend becomes null.
+           *
+           * If a mark already exists, delete it.
+           */
+          if (
+            studentMark.score === null
+          ) {
+            await tx.mark.deleteMany({
+              where: {
+                studentId:
+                  studentMark.studentId,
+
+                subjectId,
+
+                teacherId:
+                  teacher.id,
+
+                termId,
+
+                sequenceId,
+              },
+            });
+
+            continue;
+          }
+
+          /*
+           * -------------------------------------------------
+           * UPSERT MARK
+           * -------------------------------------------------
+           *
+           * Requires this Prisma constraint:
+           *
+           * @@unique([
+           *   studentId,
+           *   subjectId,
+           *   termId,
+           *   sequenceId
+           * ])
+           *
+           * IMPORTANT:
+           * teacherId is intentionally NOT part of the
+           * unique key.
+           *
+           * A student has one mark for a subject/sequence,
+           * not one mark per teacher.
+           */
+          await tx.mark.upsert({
+            where: {
+              studentId_subjectId_termId_sequenceId:
+                {
+                  studentId:
+                    studentMark.studentId,
+
+                  subjectId,
+
+                  termId,
+
+                  sequenceId,
+                },
+            },
+
+            update: {
+              /*
+               * The authenticated teacher becomes the
+               * teacher recorded on the mark.
+               */
+              teacherId:
+                teacher.id,
+
+              score:
+                studentMark.score,
+            },
+
+            create: {
               studentId:
-                student.studentId,
+                studentMark.studentId,
 
               subjectId,
 
-              sequenceId:
-                selectedSequenceRecord.id,
+              teacherId:
+                teacher.id,
+
+              termId,
+
+              sequenceId,
+
+              score:
+                studentMark.score,
             },
-        },
-
-        update: {
-          average:
-            numericMark,
-
-          teacherId,
-        },
-
-        create: {
-          studentId:
-            student.studentId,
-
-          subjectId,
-
-          teacherId,
-
-          sequenceId:
-            selectedSequenceRecord.id,
-
-          ca1: 0,
-
-          ca2: 0,
-
-          exam: 0,
-
-          average:
-            numericMark,
-        },
-      });
-
-      savedCount++;
-    }
-
-    /*
-     * Success log.
-     */
-
-    console.log(
-      "========== MARKS SAVED =========="
+          });
+        }
+      }
     );
 
-    console.log({
-      teacherId,
-
-      classroomId,
-
-      subjectId,
-
-      termId:
-        finalTerm.id,
-
-      term:
-        finalTerm.name,
-
-      sequence:
-        selectedSequenceRecord.name,
-
-      sequenceId:
-        selectedSequenceRecord.id,
-
-      sequenceOrder:
-        selectedSequenceRecord.order,
-
-      savedCount,
-    });
-
     /*
-     * Notify the administration through the existing notification system.
-     * A failure here must never break the marks submission.
+     * -------------------------------------------------------
+     * RETURN UPDATED MARKS
+     * -------------------------------------------------------
      */
 
-    try {
-      const [classroomRecord, subjectRecord] = await Promise.all([
-        prisma.classroom.findUnique({
-          where: { id: classroomId },
-          select: { name: true },
-        }),
-        prisma.subject.findUnique({
-          where: { id: subjectId },
-          select: { name: true },
-        }),
-      ]);
-
-      await notifyAdmins({
-        title: "Marks submitted",
-        message: `${teacher.fullName} submitted ${
-          classroomRecord?.name ?? "a class"
-        } ${subjectRecord?.name ?? ""} marks (${
-          selectedSequenceRecord.name
-        }).`.replace(/\s+/g, " "),
-        type: "MARK_UPDATE",
-        senderId: teacher.userId,
-        relatedType: "MARK",
-        relatedId: classroomId,
-        actionUrl: "/admin/results",
-      });
-    } catch (notificationError) {
-      console.error(
-        "MARKS SUBMISSION NOTIFICATION ERROR:",
-        notificationError
+    const studentIds =
+      uniqueStudents.map(
+        (student) => student.studentId
       );
-    }
+
+    const updatedMarks =
+      studentIds.length > 0
+        ? await prisma.mark.findMany({
+            where: {
+              subjectId,
+              termId,
+              sequenceId,
+
+              studentId: {
+                in: studentIds,
+              },
+            },
+
+            select: {
+              id: true,
+              studentId: true,
+              subjectId: true,
+              teacherId: true,
+              termId: true,
+              sequenceId: true,
+              score: true,
+            },
+          })
+        : [];
 
     /*
-     * Return success response.
+     * -------------------------------------------------------
+     * RESPONSE
+     * -------------------------------------------------------
      */
 
-    return NextResponse.json({
-      success: true,
+    return NextResponse.json(
+      {
+        success: true,
 
-      message:
-        `${selectedSequenceRecord.name} saved successfully.`,
+        message:
+          "Marks saved successfully.",
 
-      savedCount,
+        count: uniqueStudents.length,
 
-      term: {
-        id:
-          finalTerm.id,
-
-        name:
-          finalTerm.name,
+        marks: updatedMarks,
       },
-
-      sequence: {
-        id:
-          selectedSequenceRecord.id,
-
-        name:
-          selectedSequenceRecord.name,
-
-        order:
-          selectedSequenceRecord.order,
-      },
-    });
+      {
+        status: 200,
+      }
+    );
   } catch (error) {
     console.error(
       "POST /api/teacher/marks ERROR:",
       error
     );
 
-    if (error instanceof Error) {
-      console.error(
-        "ERROR MESSAGE:",
-        error.message
-      );
-
-      console.error(
-        "ERROR STACK:",
-        error.stack
-      );
-    }
-
     return NextResponse.json(
       {
         error:
-          "Failed to save marks",
+          "Failed to save marks.",
 
-        details:
+        message:
           error instanceof Error
             ? error.message
-            : String(error),
+            : "Unknown server error.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }

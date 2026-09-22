@@ -1,17 +1,37 @@
 import { NextResponse } from "next/server";
+
 import { requireAdmin } from "@/lib/admin-auth";
 import { serverError } from "@/lib/http";
 import prisma from "@/lib/prisma";
 
 /**
  * GET /api/admin/dashboard/stats
- * Everything the Admin dashboard shows, computed from the database.
+ *
+ * Dashboard statistics for the administrator.
+ *
+ * Current Mark model:
+ * - score
+ * - studentId
+ * - subjectId
+ * - teacherId
+ * - termId
+ * - sequenceId
+ *
+ * Scores are stored on a 0–20 scale.
  */
+
 export async function GET() {
   const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+
+  if (!guard.ok) {
+    return guard.response;
+  }
 
   try {
+    // =========================================================
+    // BASIC COUNTS
+    // =========================================================
+
     const [
       students,
       teachers,
@@ -30,71 +50,164 @@ export async function GET() {
       studentsWithoutParent,
     ] = await Promise.all([
       prisma.student.count(),
+
       prisma.teacher.count(),
+
       prisma.parent.count(),
+
       prisma.classroom.count(),
+
       prisma.subject.count(),
 
+      // =======================================================
+      // ACTIVE ACADEMIC YEAR
+      // =======================================================
+
       prisma.academicYear.findFirst({
-        where: { isActive: true },
-        select: { id: true, name: true, startDate: true, endDate: true },
+        where: {
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          startDate: true,
+          endDate: true,
+        },
       }),
 
+      // =======================================================
+      // CURRENT TERM
+      // =======================================================
+
       prisma.term.findFirst({
-        where: { isCurrent: true },
+        where: {
+          isCurrent: true,
+        },
         select: {
           id: true,
           name: true,
           order: true,
-          academicYear: { select: { name: true } },
+          academicYear: {
+            select: {
+              name: true,
+            },
+          },
         },
       }),
+
+      // =======================================================
+      // ATTENDANCE
+      // =======================================================
 
       prisma.attendance.groupBy({
         by: ["status"],
-        _count: { _all: true },
-      }),
-
-      prisma.mark.aggregate({
-        _avg: { average: true },
-        _count: { _all: true },
-      }),
-
-      prisma.mark.findMany({
-        orderBy: { updatedAt: "desc" },
-        take: 6,
-        select: {
-          id: true,
-          average: true,
-          grade: true,
-          updatedAt: true,
-          student: {
-            select: { id: true, firstName: true, lastName: true },
-          },
-          subject: { select: { id: true, name: true } },
-          sequence: { select: { id: true, name: true } },
+        _count: {
+          _all: true,
         },
       }),
 
+      // =======================================================
+      // MARKS
+      // =======================================================
+
+      prisma.mark.aggregate({
+        _avg: {
+          score: true,
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+
+      // =======================================================
+      // RECENT MARKS
+      // =======================================================
+
+      prisma.mark.findMany({
+        orderBy: {
+          updatedAt: "desc",
+        },
+        take: 6,
+        select: {
+          id: true,
+          score: true,
+          updatedAt: true,
+
+          student: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+
+          subject: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          sequence: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
+
+      // =======================================================
+      // RECENT ATTENDANCE
+      // =======================================================
+
       prisma.attendance.findMany({
-        orderBy: { createdAt: "desc" },
+        orderBy: {
+          createdAt: "desc",
+        },
         take: 6,
         select: {
           id: true,
           status: true,
           date: true,
           createdAt: true,
+
           student: {
-            select: { id: true, firstName: true, lastName: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
           },
-          subject: { select: { id: true, name: true } },
-          teacher: { select: { id: true, fullName: true } },
+
+          subject: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          teacher: {
+            select: {
+              id: true,
+              fullName: true,
+            },
+          },
         },
       }),
 
+      // =======================================================
+      // ADMIN NOTIFICATIONS
+      // =======================================================
+
       prisma.notification.findMany({
-        where: { userId: guard.user.id, archivedAt: null },
-        orderBy: { createdAt: "desc" },
+        where: {
+          userId: guard.user.id,
+          archivedAt: null,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
         take: 5,
         select: {
           id: true,
@@ -106,8 +219,14 @@ export async function GET() {
         },
       }),
 
+      // =======================================================
+      // RECENT SYSTEM ACTIVITY
+      // =======================================================
+
       prisma.auditLog.findMany({
-        orderBy: { createdAt: "desc" },
+        orderBy: {
+          createdAt: "desc",
+        },
         take: 8,
         select: {
           id: true,
@@ -119,18 +238,39 @@ export async function GET() {
         },
       }),
 
-      prisma.teacher.count({ where: { assignments: { none: {} } } }),
-      prisma.student.count({ where: { parentId: null } }),
+      // =======================================================
+      // TEACHERS WITHOUT ASSIGNMENTS
+      // =======================================================
+
+      prisma.teacher.count({
+        where: {
+          assignments: {
+            none: {},
+          },
+        },
+      }),
+
+      // =======================================================
+      // STUDENTS WITHOUT PARENT
+      // =======================================================
+
+      prisma.student.count({
+        where: {
+          parentId: null,
+        },
+      }),
     ]);
 
-    /* ---------------- attendance overview ---------------- */
+    // =========================================================
+    // ATTENDANCE OVERVIEW
+    // =========================================================
 
-    const attendanceTotals = {
+    const attendanceTotals: Record<string, number> = {
       PRESENT: 0,
       ABSENT: 0,
       LATE: 0,
       EXCUSED: 0,
-    } as Record<string, number>;
+    };
 
     let attendanceTotal = 0;
 
@@ -142,54 +282,130 @@ export async function GET() {
     const attendanceRate =
       attendanceTotal > 0
         ? Math.round(
-            ((attendanceTotals.PRESENT + attendanceTotals.LATE) /
+            ((attendanceTotals.PRESENT +
+              attendanceTotals.LATE) /
               attendanceTotal) *
               1000
           ) / 10
         : null;
 
-    /* ---------------- performance overview ---------------- */
+    // =========================================================
+    // PERFORMANCE OVERVIEW
+    // =========================================================
 
     const overallAverage =
-      markAggregate._avg.average === null
+      markAggregate._avg.score === null
         ? null
-        : Math.round(markAggregate._avg.average * 100) / 100;
+        : Math.round(markAggregate._avg.score * 100) / 100;
 
-    const [passingMarks, subjectAverages, publicationCount] = await Promise.all([
-      prisma.mark.count({ where: { average: { gte: 50 } } }),
-      prisma.mark.groupBy({
-        by: ["subjectId"],
-        _avg: { average: true },
-        where: { average: { not: 0 } },
-      }),
-      prisma.resultPublication.count({ where: { status: "PUBLISHED" } }),
-    ]);
+    // ---------------------------------------------------------
+    // PASSING MARKS
+    // Passing score = 10/20
+    // ---------------------------------------------------------
 
-    const subjectIds = subjectAverages.map((row) => row.subjectId);
+    const passingMarks = await prisma.mark.count({
+      where: {
+        score: {
+          gte: 10,
+        },
+      },
+    });
 
-    const subjectNames = subjectIds.length
-      ? await prisma.subject.findMany({
-          where: { id: { in: subjectIds } },
-          select: { id: true, name: true },
-        })
-      : [];
+    // =========================================================
+    // AVERAGE SCORE BY SUBJECT
+    // =========================================================
 
-    const nameById = new Map(subjectNames.map((s) => [s.id, s.name]));
+    const subjectAverages = await prisma.mark.groupBy({
+      by: ["subjectId"],
+      _avg: {
+        score: true,
+      },
+      where: {
+        score: {
+          not: 0,
+        },
+      },
+    });
+
+    // =========================================================
+    // PUBLISHED RESULTS
+    // =========================================================
+
+    const publicationCount =
+      await prisma.resultPublication.count({
+        where: {
+          status: "PUBLISHED",
+        },
+      });
+
+    // =========================================================
+    // SUBJECT NAMES
+    // =========================================================
+
+    const subjectIds = subjectAverages.map(
+      (row) => row.subjectId
+    );
+
+    const subjectNames =
+      subjectIds.length > 0
+        ? await prisma.subject.findMany({
+            where: {
+              id: {
+                in: subjectIds,
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+            },
+          })
+        : [];
+
+    const nameById = new Map(
+      subjectNames.map((subject) => [
+        subject.id,
+        subject.name,
+      ])
+    );
+
+    // =========================================================
+    // RANK SUBJECTS
+    // =========================================================
 
     const rankedSubjects = subjectAverages
       .map((row) => ({
         subjectId: row.subjectId,
-        name: nameById.get(row.subjectId) ?? "Unknown subject",
-        average: Math.round((row._avg.average ?? 0) * 100) / 100,
+
+        name:
+          nameById.get(row.subjectId) ??
+          "Unknown subject",
+
+        average:
+          Math.round(
+            (row._avg.score ?? 0) * 100
+          ) / 100,
       }))
-      .sort((a, b) => b.average - a.average);
+      .sort(
+        (a, b) =>
+          b.average - a.average
+      );
+
+    // =========================================================
+    // PASS RATE
+    // =========================================================
 
     const passRate =
       markAggregate._count._all > 0
-        ? Math.round((passingMarks / markAggregate._count._all) * 1000) / 10
+        ? Math.round(
+            (passingMarks /
+              markAggregate._count._all) *
+              1000
+          ) / 10
         : null;
 
-    /* ---------------- alerts ---------------- */
+    // =========================================================
+    // ALERTS
+    // =========================================================
 
     const alerts: {
       tone: "warning" | "info" | "danger";
@@ -197,6 +413,10 @@ export async function GET() {
       message: string;
       href: string;
     }[] = [];
+
+    // ---------------------------------------------------------
+    // No active academic year
+    // ---------------------------------------------------------
 
     if (!academicYear) {
       alerts.push({
@@ -208,6 +428,10 @@ export async function GET() {
       });
     }
 
+    // ---------------------------------------------------------
+    // No current term
+    // ---------------------------------------------------------
+
     if (!currentTerm) {
       alerts.push({
         tone: "warning",
@@ -218,11 +442,17 @@ export async function GET() {
       });
     }
 
+    // ---------------------------------------------------------
+    // Teachers without assignments
+    // ---------------------------------------------------------
+
     if (unassignedTeachers > 0) {
       alerts.push({
         tone: "warning",
         title: `${unassignedTeachers} teacher${
-          unassignedTeachers === 1 ? "" : "s"
+          unassignedTeachers === 1
+            ? ""
+            : "s"
         } without a teaching assignment`,
         message:
           "Assign a subject and class so these teachers can enter marks and attendance.",
@@ -230,17 +460,27 @@ export async function GET() {
       });
     }
 
+    // ---------------------------------------------------------
+    // Students without parents
+    // ---------------------------------------------------------
+
     if (studentsWithoutParent > 0) {
       alerts.push({
         tone: "info",
         title: `${studentsWithoutParent} student${
-          studentsWithoutParent === 1 ? "" : "s"
+          studentsWithoutParent === 1
+            ? ""
+            : "s"
         } without a linked parent`,
         message:
           "Link a parent account so results and announcements reach the family.",
         href: "/admin/students",
       });
     }
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     return NextResponse.json({
       counts: {
@@ -252,6 +492,7 @@ export async function GET() {
       },
 
       academicYear,
+
       currentTerm,
 
       attendance: {
@@ -262,23 +503,44 @@ export async function GET() {
 
       performance: {
         overallAverage,
+
         passRate,
-        marksRecorded: markAggregate._count._all,
-        strongestSubject: rankedSubjects[0] ?? null,
+
+        marksRecorded:
+          markAggregate._count._all,
+
+        strongestSubject:
+          rankedSubjects[0] ?? null,
+
         weakestSubject:
           rankedSubjects.length > 1
-            ? rankedSubjects[rankedSubjects.length - 1]
+            ? rankedSubjects[
+                rankedSubjects.length - 1
+              ]
             : null,
-        publishedResults: publicationCount,
+
+        publishedResults:
+          publicationCount,
       },
 
       recentMarks,
+
       recentAttendance,
+
       notifications,
+
       recentActivity,
+
       alerts,
     });
   } catch (error) {
-    return serverError("ADMIN DASHBOARD STATS ERROR", error);
+    console.error(
+      "ADMIN DASHBOARD STATS ERROR:",
+      error
+    );
+
+    return serverError(
+      "ADMIN DASHBOARD STATS ERROR"
+    );
   }
 }

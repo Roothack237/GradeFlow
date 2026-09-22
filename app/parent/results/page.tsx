@@ -68,11 +68,19 @@ export default function ParentResultsPage() {
         { cache: "no-store" }
       );
 
-      const payload = await response.json();
+    const payload = await response.json();
 
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to load the results.");
-      }
+        console.log("PARENT RESULTS RESPONSE:", payload);
+
+        if (!response.ok) {
+          console.error("PARENT RESULTS API ERROR:", payload);
+
+          throw new Error(
+            payload.error ||
+            payload.message ||
+            JSON.stringify(payload)
+          );
+        }
 
       setData(payload);
 
