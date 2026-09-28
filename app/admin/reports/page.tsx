@@ -12,6 +12,7 @@ import {
   FileText,
   Loader2,
   RefreshCw,
+  Send,
   Users,
   X,
 } from "lucide-react";
@@ -54,8 +55,12 @@ type Classroom = {
 type StudentReport = {
   id: string;
   name: string;
+  firstName: string;
+  lastName: string;
+  marksRecorded: number;
+  total: number;
   average: number;
-  rank: number;
+  position: number | null;
 };
 
 type ReportCardsData = {
@@ -118,6 +123,8 @@ export default function ReportCardsPage() {
   const [loadingData, setLoadingData] = useState(true);
 
   const [loading, setLoading] = useState(false);
+
+  const [publishing, setPublishing] = useState(false);
 
   const [reportCards, setReportCards] =
     useState<ReportCardsData | null>(null);
@@ -378,6 +385,106 @@ export default function ReportCardsPage() {
       setLoading(false);
     }
   }
+
+
+  // =======================================================
+// PUBLISH REPORT CARDS
+// =======================================================
+
+async function publishReportCards() {
+  if (
+    !selectedTerm ||
+    !selectedClass ||
+    !selectedSequence
+  ) {
+    alert(
+      "Please select an academic year, term, sequence and class."
+    );
+    return;
+  }
+
+  if (!reportCards) {
+    alert("Please generate the report cards first.");
+    return;
+  }
+
+  if (reportCards.students.length === 0) {
+    alert("There are no students to publish report cards for.");
+    return;
+  }
+
+  const alreadyPublished =
+    reportCards.publication?.published ??
+    reportCards.summary.published;
+
+  if (alreadyPublished) {
+    alert("The report cards for this class and term are already published.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Publish report cards for ${reportCards.classroom.name} - ${reportCards.term.name}?\n\nParents will be able to access the published report cards.`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setPublishing(true);
+
+    const response = await fetch(
+      "/api/admin/publications",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+       body: JSON.stringify({
+          scope: "TERM",
+          action: "PUBLISH",
+          publicationType: "REPORT_CARD",
+          termId: selectedTerm,
+          classroomId: selectedClass,
+          sequenceId: selectedSequence,
+          notes: `Report cards published for ${reportCards.term.name} - ${reportCards.classroom.name}.`,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data?.message ||
+          data?.error ||
+          "Failed to publish report cards."
+      );
+    }
+
+    alert(
+      data?.message ||
+        "Report cards published successfully."
+    );
+
+    // Refresh the report-card data so the status changes
+    // immediately from Not Published -> Published.
+    await loadReportCards();
+  } catch (error) {
+    console.error(
+      "Failed to publish report cards:",
+      error
+    );
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Failed to publish report cards."
+    );
+  } finally {
+    setPublishing(false);
+  }
+}
 
   // =======================================================
   // PDF URL
@@ -722,15 +829,47 @@ export default function ReportCardsPage() {
                   </p>
                 </div>
 
-                <a
-                  href={getClassPdfUrl()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white hover:bg-purple-800"
-                >
-                  <FileDown className="h-4 w-4" />
-                  Download Full Class PDF
-                </a>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* DOWNLOAD FULL CLASS PDF */}
+                      <a
+                        href={getClassPdfUrl()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-purple-800"
+                      >
+                        <FileDown className="h-4 w-4" />
+                        Download Full Class PDF
+                      </a>
+
+                      {/* PUBLISH REPORT CARDS */}
+                      <button
+                        type="button"
+                        onClick={publishReportCards}
+                        disabled={
+                          publishing ||
+                          (reportCards.publication?.published ??
+                            reportCards.summary.published)
+                        }
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {publishing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Publishing...
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-4 w-4" />
+                            {(
+                              reportCards.publication?.published ??
+                              reportCards.summary.published
+                            )
+                              ? "Report Cards Published"
+                              : "Publish Report Cards"}
+                          </>
+                        )}
+                      </button>
+                    </div>
 
               </div>
 
@@ -917,7 +1056,7 @@ export default function ReportCardsPage() {
 
                                   <Award className="h-3.5 w-3.5" />
 
-                                  {student.rank}
+                                  {student.position ?? "—"} n  
 
                                 </span>
 

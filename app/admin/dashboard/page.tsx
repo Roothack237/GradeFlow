@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -205,11 +206,8 @@ function percentage(value: number | null) {
 
 export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
-
   const [loading, setLoading] = useState(true);
-
   const [error, setError] = useState("");
-
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
@@ -329,6 +327,7 @@ export default function AdminDashboardPage() {
 
       {data ? (
         <div className="space-y-6">
+
           {/* =================================================
               ACADEMIC PERIOD
           ================================================= */}
@@ -452,6 +451,7 @@ export default function AdminDashboardPage() {
           ================================================= */}
 
           <div className="grid gap-6 xl:grid-cols-2">
+
             {/* ATTENDANCE */}
 
             <Card
@@ -588,6 +588,7 @@ export default function AdminDashboardPage() {
                 />
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
+
                   {/* OVERALL AVERAGE */}
 
                   <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800/60">
@@ -660,6 +661,7 @@ export default function AdminDashboardPage() {
           ================================================= */}
 
           <div className="grid gap-6 xl:grid-cols-2">
+
             {/* RECENT RESULTS */}
 
             <Card
@@ -708,6 +710,7 @@ export default function AdminDashboardPage() {
 
                           <Td className="text-right font-semibold">
                             {mark.score}
+
                             <span className="ml-1 text-xs font-normal text-gray-400">
                               /20
                             </span>
@@ -805,6 +808,7 @@ export default function AdminDashboardPage() {
           ================================================= */}
 
           <div className="grid gap-6 xl:grid-cols-2">
+
             {/* NOTIFICATIONS */}
 
             <Card
@@ -935,76 +939,110 @@ export default function AdminDashboardPage() {
 
           <Card title="Quick actions">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                {
-                  href: "/admin/students",
-                  label: "Manage students",
-                  icon: <Users size={18} />,
-                },
-                {
-                  href: "/admin/results",
-                  label: "Review results",
-                  icon: (
-                    <NotebookPen size={18} />
-                  ),
-                },
-                {
-                  href: "/admin/reports",
-                  label: "Generate reports",
-                  icon: (
-                    <BarChart3 size={18} />
-                  ),
-                },
-                {
-                  href: "/admin/ai",
-                  label: "Ask the AI assistant",
-                  icon: (
-                    <Sparkles size={18} />
-                  ),
-                },
-                {
-                  href: "/admin/notifications",
-                  label: "Send announcement",
-                  icon: <Bell size={18} />,
-                },
-                {
-                  href: "/admin/forum",
-                  label: "Moderate forum",
-                  icon: (
-                    <MessagesSquare
-                      size={18}
-                    />
-                  ),
-                },
-                {
-                  href: "/admin/attendance",
-                  label: "Attendance records",
-                  icon: (
-                    <CalendarCheck
-                      size={18}
-                    />
-                  ),
-                },
-                {
-                  href: "/admin/predictions",
-                  label: "Performance analysis",
-                  icon: (
-                    <TrendingUp size={18} />
-                  ),
-                },
-              ].map((action) => (
-                <Link
-                  key={action.href}
-                  href={action.href}
-                  className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
-                    {action.icon}
+
+              <Link
+                href="/admin/students"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <Users size={18} />
+                </span>
+                Manage students
+              </Link>
+
+              <Link
+                href="/admin/results"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <NotebookPen size={18} />
+                </span>
+                Review results
+              </Link>
+
+              <Link
+                href="/admin/reports"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <BarChart3 size={18} />
+                </span>
+                Generate reports
+              </Link>
+
+              <Link
+                href="/admin/ai"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <Sparkles size={18} />
+                </span>
+                Ask the AI assistant
+              </Link>
+
+              <Link
+                href="/admin/notifications"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <Bell size={18} />
+                </span>
+                Send announcement
+              </Link>
+
+              <Link
+                href="/admin/forum"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <MessagesSquare size={18} />
+                </span>
+                Moderate forum
+              </Link>
+
+              {/* =================================================
+                  CLASS GROUPS
+              ================================================= */}
+
+              <Link
+                href="/class-groups"
+                className="flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4 text-sm font-medium text-purple-700 transition hover:-translate-y-0.5 hover:border-purple-400 hover:shadow-md dark:border-purple-900/60 dark:bg-purple-950/30 dark:text-purple-300"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
+                  <MessagesSquare size={18} />
+                </span>
+
+                <span>
+                  <span className="block font-semibold">
+                    Class Groups
                   </span>
 
-                  {action.label}
-                </Link>
-              ))}
+                  <span className="block text-xs font-normal text-purple-500 dark:text-purple-400">
+                    View class messages
+                  </span>
+                </span>
+              </Link>
+
+              <Link
+                href="/admin/attendance"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <CalendarCheck size={18} />
+                </span>
+                Attendance records
+              </Link>
+
+              <Link
+                href="/admin/predictions"
+                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 text-sm font-medium text-gray-700 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md dark:border-gray-800 dark:text-gray-200 dark:hover:border-purple-800"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                  <TrendingUp size={18} />
+                </span>
+                Performance analysis
+              </Link>
+
             </div>
           </Card>
         </div>

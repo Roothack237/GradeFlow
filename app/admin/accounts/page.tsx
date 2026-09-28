@@ -1061,7 +1061,7 @@ export default function ManageAccountsPage() {
           }
           title="Account Management"
           subtitle="Manage students, teachers, and parents"
-        />
+        />  
 
         <main className="min-h-screen bg-gray-50 p-5 dark:bg-gray-950 sm:p-8">
           <div className="mx-auto max-w-7xl">

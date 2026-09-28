@@ -1,993 +1,505 @@
+
 import { NextResponse } from "next/server";
+
 import { requireAdmin } from "@/lib/admin-auth";
-import { badRequest, dateFrom, endOfDay, serverError, str } from "@/lib/http";
+import { badRequest, serverError, str } from "@/lib/http";
 import prisma from "@/lib/prisma";
-import { PASS_MARK, gradeOf } from "@/lib/grading";
 
 /**
- * GET /api/admin/reports
- * Real report data built from the database. Four report families are
- * supported, selected with ?type=:
+ * GET /api/admin/reports/report-cards
  *
- *   STUDENT      ?studentId= &termId=
- *   CLASS        ?classroomId= &termId=
- *   ATTENDANCE   ?termId= &classroomId= &from= &to=
- *   PERFORMANCE  ?termId= &academicYearId=
+ * Query:
+ * ?academicYearId=
+ * &termId=
+ * &sequenceId=
+ * &classroomId=
  *
- * Every report is returned as structured data so the admin UI can render it,
- * print it and export it to CSV.
+ * Generates the report-card summary for the
+ * selected class, term and sequence.
+ *
+ * IMPORTANT:
+ * Report cards are term-level documents.
+ * The selected sequence is used for the preview
+ * and student ranking shown on this page.
+ *
+ * Publication status comes from ResultPublication
+ * for the selected term + classroom.
  */
 export async function GET(request: Request) {
   const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+
+  if (!guard.ok) {
+    return guard.response;
+  }
 
   try {
-    const { searchParams } = new URL(request.url);
+    const { searchParams } =
+      new URL(request.url);
 
-    const type = (str(searchParams.get("type")) || "PERFORMANCE").toUpperCase();
+    const academicYearId = str(
+      searchParams.get(
+        "academicYearId"
+      )
+    );
 
-    const termId = str(searchParams.get("termId"));
-    const classroomId = str(searchParams.get("classroomId"));
-    const studentId = str(searchParams.get("studentId"));
+    const termId = str(
+      searchParams.get("termId")
+    );
 
-    switch (type) {
-      case "STUDENT":
-        return await studentReport({ studentId, termId });
+    const sequenceId = str(
+      searchParams.get("sequenceId")
+    );
 
-      case "CLASS":
-        return await classReport({ classroomId, termId });
+    const classroomId = str(
+      searchParams.get(
+        "classroomId"
+      )
+    );
 
-      case "ATTENDANCE":
-        return await attendanceReport({
-          termId,
-          classroomId,
-          from: dateFrom(searchParams.get("from")),
-          to: endOfDay(searchParams.get("to")),
-        });
-
-      case "PERFORMANCE":
-        return await performanceReport({ termId });
-
-      default:
-        return badRequest(
-          "Report type must be STUDENT, CLASS, ATTENDANCE or PERFORMANCE."
-        );
+    /*
+     * Validate required parameters.
+     */
+    if (
+      !academicYearId ||
+      !termId ||
+      !sequenceId ||
+      !classroomId
+    ) {
+      return badRequest(
+        "Academic year, term, sequence and class are required."
+      );
     }
-  } catch (error) {
-    return serverError("ADMIN REPORT ERROR", error);
-  }
-}
 
-/* =========================================================
-   HELPERS
-========================================================= */
+    /*
+     * Load all required information.
+     */
+    const [
+      academicYear,
+      term,
+      sequence,
+      classroom,
+      publication,
+    ] = await Promise.all([
+      prisma.academicYear.findUnique({
+        where: {
+          id: academicYearId,
+        },
 
-/** Resolves the requested term, falling back to the current one. */
-async function resolveTerm(termId?: string | null) {
-  if (termId) {
-    return prisma.term.findUnique({
-      where: { id: termId },
-      select: {
-        id: true,
-        name: true,
-        order: true,
-        academicYear: { select: { id: true, name: true } },
-      },
-    });
-  }
-
-  return prisma.term.findFirst({
-    where: { isCurrent: true },
-    select: {
-      id: true,
-      name: true,
-      order: true,
-      academicYear: { select: { id: true, name: true } },
-    },
-  });
-}
-
-function round(value: number | null | undefined, digits = 2) {
-  if (value === null || value === undefined || Number.isNaN(value)) return null;
-
-  const factor = 10 ** digits;
-
-  return Math.round(value * factor) / factor;
-}
-
-
-
-/* =========================================================
-   STUDENT REPORT
-========================================================= */
-
-async function studentReport(options: {
-  studentId: string;
-  termId?: string | null;
-}) {
-  const { studentId } = options;
-
-  if (!studentId) return badRequest("A student is required for this report.");
-
-  const term = await resolveTerm(options.termId);
-
-  if (!term) return badRequest("No term available for this report.");
-
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      matricule: true,
-      gender: true,
-      status: true,
-      dateOfBirth: true,
-      classroom: {
         select: {
           id: true,
           name: true,
-          section: { select: { name: true } },
-        },
-      },
-      parent: { select: { fullName: true, email: true, phone: true } },
-    },
-  });
-
-  if (!student) {
-    return NextResponse.json({ error: "Student not found." }, { status: 404 });
-  }
-
-  const [marks, attendance, reportCard] = await Promise.all([
-    prisma.mark.findMany({
-      where: { studentId, sequence: { termId: term.id } },
-      select: {
-        ca1: true,
-        ca2: true,
-        exam: true,
-        average: true,
-        grade: true,
-        remark: true,
-        subject: {
-          select: { id: true, name: true, code: true, coefficient: true },
-        },
-        sequence: { select: { id: true, name: true, order: true } },
-        teacher: { select: { fullName: true } },
-      },
-      orderBy: [{ subject: { name: "asc" } }, { sequence: { order: "asc" } }],
-    }),
-
-    prisma.attendance.groupBy({
-      by: ["status"],
-      where: { studentId, sequence: { termId: term.id } },
-      _count: { _all: true },
-    }),
-
-    prisma.reportCard.findUnique({
-      where: { studentId_termId: { studentId, termId: term.id } },
-      select: {
-        average: true,
-        rank: true,
-        decision: true,
-        principalRemark: true,
-        createdAt: true,
-      },
-    }),
-  ]);
-
-  /* ---- per subject aggregation ---- */
-
-  const subjectMap = new Map<
-    string,
-    {
-      id: string;
-      name: string;
-      coefficient: number;
-      sequences: {
-        sequenceId: string;
-        sequenceName: string;
-        ca1: number;
-        ca2: number;
-        exam: number;
-        average: number;
-        grade: string | null;
-      }[];
-      total: number;
-      count: number;
-      teacher: string;
-    }
-  >();
-
-  for (const mark of marks) {
-    const entry = subjectMap.get(mark.subject.id) ?? {
-      id: mark.subject.id,
-      name: mark.subject.name,
-      coefficient: mark.subject.coefficient,
-      sequences: [],
-      total: 0,
-      count: 0,
-      teacher: mark.teacher.fullName,
-    };
-
-    entry.sequences.push({
-      sequenceId: mark.sequence.id,
-      sequenceName: mark.sequence.name,
-      ca1: mark.ca1,
-      ca2: mark.ca2,
-      exam: mark.exam,
-      average: mark.average,
-      grade: mark.grade,
-    });
-
-    entry.total += mark.average;
-    entry.count += 1;
-
-    subjectMap.set(mark.subject.id, entry);
-  }
-
-  const subjects = Array.from(subjectMap.values()).map((subject) => ({
-    id: subject.id,
-    name: subject.name,
-    coefficient: subject.coefficient,
-    teacher: subject.teacher,
-    sequences: subject.sequences,
-    average: round(subject.total / subject.count),
-    grade: gradeOf(subject.total / subject.count),
-  }));
-
-  const weightedTotal = subjects.reduce(
-    (sum, subject) => sum + (subject.average ?? 0) * subject.coefficient,
-    0
-  );
-
-  const coefficientTotal = subjects.reduce(
-    (sum, subject) => sum + subject.coefficient,
-    0
-  );
-
-  const attendanceCounts: Record<string, number> = {
-    PRESENT: 0,
-    ABSENT: 0,
-    LATE: 0,
-    EXCUSED: 0,
-  };
-
-  for (const row of attendance) attendanceCounts[row.status] = row._count._all;
-
-  const attendanceTotal = Object.values(attendanceCounts).reduce(
-    (sum, value) => sum + value,
-    0
-  );
-
-  return NextResponse.json({
-    type: "STUDENT",
-    term,
-    generatedAt: new Date().toISOString(),
-    student,
-    subjects,
-    summary: {
-      average: coefficientTotal ? round(weightedTotal / coefficientTotal) : null,
-      grade: coefficientTotal
-        ? gradeOf(weightedTotal / coefficientTotal)
-        : null,
-      subjects: subjects.length,
-      marks: marks.length,
-      bestSubject:
-        subjects.length > 0
-          ? subjects.reduce((best, subject) =>
-              (subject.average ?? 0) > (best.average ?? 0) ? subject : best
-            ).name
-          : null,
-      weakestSubject:
-        subjects.length > 0
-          ? subjects.reduce((worst, subject) =>
-              (subject.average ?? 0) < (worst.average ?? 0) ? subject : worst
-            ).name
-          : null,
-    },
-    attendance: {
-      counts: attendanceCounts,
-      total: attendanceTotal,
-      rate: attendanceTotal
-        ? round(
-            ((attendanceCounts.PRESENT + attendanceCounts.LATE) /
-              attendanceTotal) *
-              100,
-            1
-          )
-        : null,
-    },
-    reportCard,
-  });
-}
-
-/* =========================================================
-   CLASS REPORT
-========================================================= */
-
-async function classReport(options: {
-  classroomId: string;
-  termId?: string | null;
-}) {
-  if (!options.classroomId) {
-    return badRequest("A class is required for this report.");
-  }
-
-  const term = await resolveTerm(options.termId);
-
-  if (!term) return badRequest("No term available for this report.");
-
-  const classroom = await prisma.classroom.findUnique({
-    where: { id: options.classroomId },
-    select: {
-      id: true,
-      name: true,
-      section: { select: { name: true } },
-      students: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          matricule: true,
-        },
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-      },
-    },
-  });
-
-  if (!classroom) {
-    return NextResponse.json({ error: "Class not found." }, { status: 404 });
-  }
-
-  const [marks, attendance, reportCards] = await Promise.all([
-    prisma.mark.findMany({
-      where: {
-        student: { classroomId: classroom.id },
-        sequence: { termId: term.id },
-      },
-      select: {
-        studentId: true,
-        average: true,
-        subject: { select: { id: true, name: true, coefficient: true } },
-      },
-    }),
-
-    prisma.attendance.groupBy({
-      by: ["studentId", "status"],
-      where: {
-        sequence: { termId: term.id },
-        student: { classroomId: classroom.id },
-      },
-      _count: { _all: true },
-    }),
-
-    prisma.reportCard.findMany({
-      where: { termId: term.id, student: { classroomId: classroom.id } },
-      select: { studentId: true, average: true, rank: true, decision: true },
-    }),
-  ]);
-
-  /* ---- per student ---- */
-
-  const studentStats = new Map<
-    string,
-    { total: number; count: number; passed: number }
-  >();
-
-  for (const mark of marks) {
-    const entry = studentStats.get(mark.studentId) ?? {
-      total: 0,
-      count: 0,
-      passed: 0,
-    };
-
-    entry.total += mark.average;
-    entry.count += 1;
-    if (mark.average >= PASS_MARK) entry.passed += 1;
-
-    studentStats.set(mark.studentId, entry);
-  }
-
-  const attendanceByStudent = new Map<
-    string,
-    { PRESENT: number; ABSENT: number; LATE: number; EXCUSED: number }
-  >();
-
-  for (const row of attendance) {
-    const entry = attendanceByStudent.get(row.studentId) ?? {
-      PRESENT: 0,
-      ABSENT: 0,
-      LATE: 0,
-      EXCUSED: 0,
-    };
-
-    entry[row.status as "PRESENT"] = row._count._all;
-
-    attendanceByStudent.set(row.studentId, entry);
-  }
-
-  const reportCardByStudent = new Map(
-    reportCards.map((card) => [card.studentId, card])
-  );
-
-  const students = classroom.students
-    .map((student) => {
-      const stats = studentStats.get(student.id);
-      const attendanceEntry = attendanceByStudent.get(student.id);
-      const attendanceTotal = attendanceEntry
-        ? attendanceEntry.PRESENT +
-          attendanceEntry.ABSENT +
-          attendanceEntry.LATE +
-          attendanceEntry.EXCUSED
-        : 0;
-
-      const average = stats && stats.count ? stats.total / stats.count : null;
-
-      return {
-        id: student.id,
-        name: `${student.firstName} ${student.lastName}`.trim(),
-        matricule: student.matricule,
-        marks: stats?.count ?? 0,
-        average: round(average),
-        grade: average === null ? null : gradeOf(average),
-        passRate:
-          stats && stats.count
-            ? round((stats.passed / stats.count) * 100, 1)
-            : null,
-        attendanceRate: attendanceEntry
-          ? round(
-              ((attendanceEntry.PRESENT + attendanceEntry.LATE) /
-                (attendanceTotal || 1)) *
-                100,
-              1
-            )
-          : null,
-        rank: reportCardByStudent.get(student.id)?.rank ?? null,
-        decision: reportCardByStudent.get(student.id)?.decision ?? null,
-      };
-    })
-    .sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
-
-  /* ---- per subject ---- */
-
-  const subjectStats = new Map<
-    string,
-    { name: string; coefficient: number; total: number; count: number; passed: number }
-  >();
-
-  for (const mark of marks) {
-    const entry = subjectStats.get(mark.subject.id) ?? {
-      name: mark.subject.name,
-      coefficient: mark.subject.coefficient,
-      total: 0,
-      count: 0,
-      passed: 0,
-    };
-
-    entry.total += mark.average;
-    entry.count += 1;
-    if (mark.average >= PASS_MARK) entry.passed += 1;
-
-    subjectStats.set(mark.subject.id, entry);
-  }
-
-  const subjects = Array.from(subjectStats.entries())
-    .map(([id, entry]) => ({
-      id,
-      name: entry.name,
-      coefficient: entry.coefficient,
-      recorded: entry.count,
-      average: round(entry.total / entry.count),
-      passRate: round((entry.passed / entry.count) * 100, 1),
-    }))
-    .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
-
-  const classAverage =
-    students.filter((student) => student.average !== null).length > 0
-      ? round(
-          students.reduce((sum, student) => sum + (student.average ?? 0), 0) /
-            students.filter((student) => student.average !== null).length
-        )
-      : null;
-
-  return NextResponse.json({
-    type: "CLASS",
-    term,
-    generatedAt: new Date().toISOString(),
-    classroom: {
-      id: classroom.id,
-      name: classroom.name,
-      sectionName: classroom.section?.name ?? null,
-      students: classroom.students.length,
-    },
-    students,
-    subjects,
-    summary: {
-      average: classAverage,
-      marks: marks.length,
-      passRate:
-        students.filter((student) => student.average !== null).length > 0
-          ? round(
-              (students.filter((student) => (student.average ?? 0) >= PASS_MARK).length /
-                students.filter((student) => student.average !== null).length) *
-                100,
-              1
-            )
-          : null,
-      published: await prisma.resultPublication.count({
-        where: {
-          classroomId: classroom.id,
-          termId: term.id,
-          status: "PUBLISHED",
         },
       }),
-    },
-  });
-}
 
-/* =========================================================
-   ATTENDANCE REPORT
-========================================================= */
+      prisma.term.findUnique({
+        where: {
+          id: termId,
+        },
 
-async function attendanceReport(options: {
-  termId?: string | null;
-  classroomId?: string | null;
-  from?: Date | null;
-  to?: Date | null;
-}) {
-  const term = await resolveTerm(options.termId);
+        select: {
+          id: true,
+          name: true,
+          order: true,
+          academicYearId: true,
 
-  if (!term) return badRequest("No term available for this report.");
-
-  const where = {
-    sequence: { termId: term.id },
-    ...(options.classroomId
-      ? { student: { classroomId: options.classroomId } }
-      : {}),
-    ...(options.from || options.to
-      ? {
-          date: {
-            ...(options.from ? { gte: options.from } : {}),
-            ...(options.to ? { lte: options.to } : {}),
-          },
-        }
-      : {}),
-  };
-
-  const [statusGroups, byClass, byDay, students] = await Promise.all([
-    prisma.attendance.groupBy({
-      by: ["status"],
-      where,
-      _count: { _all: true },
-    }),
-
-    prisma.attendance.findMany({
-      where,
-      select: {
-        status: true,
-        student: {
-          select: {
-            classroomId: true,
-            classroom: {
-              select: { id: true, name: true, section: { select: { name: true } } },
+          academicYear: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
-      },
-    }),
+      }),
 
-    prisma.attendance.groupBy({
-      by: ["date", "status"],
-      where,
-      _count: { _all: true },
-      orderBy: { date: "asc" },
-    }),
+      prisma.sequence.findUnique({
+        where: {
+          id: sequenceId,
+        },
 
-    prisma.attendance.groupBy({
-      by: ["studentId", "status"],
-      where,
-      _count: { _all: true },
-    }),
-  ]);
+        select: {
+          id: true,
+          name: true,
+          order: true,
+          termId: true,
+        },
+      }),
 
-  const counts: Record<string, number> = {
-    PRESENT: 0,
-    ABSENT: 0,
-    LATE: 0,
-    EXCUSED: 0,
-  };
+      prisma.classroom.findUnique({
+        where: {
+          id: classroomId,
+        },
 
-  for (const row of statusGroups) counts[row.status] = row._count._all;
+        select: {
+          id: true,
+          name: true,
+        },
+      }),
 
-  const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+      /*
+       * REAL publication status.
+       */
+      prisma.resultPublication.findUnique({
+        where: {
+          termId_classroomId: {
+            termId,
+            classroomId,
+          },
+        },
 
-  /* ---- per class ---- */
+        select: {
+          status: true,
+          publishedAt: true,
+          publishedById: true,
+          notes: true,
+        },
+      }),
+    ]);
 
-  const classMap = new Map<
-    string,
-    {
-      id: string;
-      name: string;
-      sectionName: string | null;
-      counts: Record<string, number>;
+    /*
+     * Validate academic year.
+     */
+    if (!academicYear) {
+      return NextResponse.json(
+        {
+          error:
+            "Academic year not found.",
+        },
+        {
+          status: 404,
+        }
+      );
     }
-  >();
 
-  for (const record of byClass) {
-    const classroom = record.student.classroom;
+    /*
+     * Validate term.
+     */
+    if (!term) {
+      return NextResponse.json(
+        {
+          error: "Term not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
 
-    if (!classroom) continue;
+    /*
+     * Make sure term belongs to selected
+     * academic year.
+     */
+    if (
+      term.academicYearId !==
+      academicYearId
+    ) {
+      return badRequest(
+        "The selected term does not belong to the selected academic year."
+      );
+    }
 
-    const entry = classMap.get(classroom.id) ?? {
-      id: classroom.id,
-      name: classroom.name,
-      sectionName: classroom.section?.name ?? null,
-      counts: { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 },
-    };
+    /*
+     * Validate sequence.
+     */
+    if (!sequence) {
+      return NextResponse.json(
+        {
+          error:
+            "Sequence not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
 
-    entry.counts[record.status] = (entry.counts[record.status] ?? 0) + 1;
+    /*
+     * Make sure sequence belongs to term.
+     */
+    if (
+      sequence.termId !== termId
+    ) {
+      return badRequest(
+        "The selected sequence does not belong to the selected term."
+      );
+    }
 
-    classMap.set(classroom.id, entry);
-  }
+    /*
+     * Validate classroom.
+     */
+    if (!classroom) {
+      return NextResponse.json(
+        {
+          error:
+            "Class not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
 
-  const classes = Array.from(classMap.values())
-    .map((entry) => {
-      const entryTotal = Object.values(entry.counts).reduce(
-        (sum, value) => sum + value,
-        0
+    /*
+     * Publication status.
+     */
+    const isPublished =
+      publication?.status ===
+      "PUBLISHED";
+
+    /*
+     * Get active students in the class.
+     *
+     * If your Student model uses a different
+     * status field, this intentionally avoids
+     * assuming one.
+     */
+    const students =
+      await prisma.student.findMany({
+        where: {
+          classroomId,
+        },
+
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+
+        orderBy: [
+          {
+            lastName: "asc",
+          },
+          {
+            firstName: "asc",
+          },
+        ],
+      });
+
+    /*
+     * Get marks for the selected sequence.
+     *
+     * We use the Mark schema currently used
+     * by GradeFlow:
+     *
+     * studentId
+     * subjectId
+     * teacherId
+     * termId
+     * sequenceId
+     * score
+     */
+    const marks =
+      await prisma.mark.findMany({
+        where: {
+          termId,
+          sequenceId,
+
+          student: {
+            classroomId,
+          },
+        },
+
+        select: {
+          studentId: true,
+          subjectId: true,
+          score: true,
+        },
+      });
+
+    /*
+     * Group marks by student.
+     */
+    const marksByStudent =
+      new Map<
+        string,
+        number[]
+      >();
+
+    for (const mark of marks) {
+      const existing =
+        marksByStudent.get(
+          mark.studentId
+        ) ?? [];
+
+      existing.push(
+        Number(mark.score)
       );
 
-      return {
-        ...entry,
-        total: entryTotal,
-        rate: entryTotal
-          ? round(
-              ((entry.counts.PRESENT + entry.counts.LATE) / entryTotal) * 100,
-              1
-            )
-          : null,
-      };
-    })
-    .sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0));
+      marksByStudent.set(
+        mark.studentId,
+        existing
+      );
+    }
 
-  /* ---- per student ---- */
+    /*
+     * Calculate student averages.
+     */
+    const rankedStudents =
+      students
+        .map((student) => {
+          const scores =
+            marksByStudent.get(
+              student.id
+            ) ?? [];
 
-  const studentMap = new Map<
-    string,
-    { counts: Record<string, number> }
-  >();
+          const average =
+            scores.length > 0
+              ? scores.reduce(
+                  (sum, score) =>
+                    sum + score,
+                  0
+                ) / scores.length
+              : 0;
 
-  for (const row of students) {
-    const entry = studentMap.get(row.studentId) ?? {
-      counts: { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 },
-    };
+          return {
+            id: student.id,
 
-    entry.counts[row.status] = row._count._all;
+            name:
+              `${student.firstName} ${student.lastName}`.trim(),
 
-    studentMap.set(row.studentId, entry);
-  }
+            average: Number(
+              average.toFixed(2)
+            ),
 
-  const studentIds = Array.from(studentMap.keys());
+            rank: 0,
 
-  const studentInfo = studentIds.length
-    ? await prisma.student.findMany({
-        where: { id: { in: studentIds } },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          matricule: true,
-          classroom: { select: { name: true } },
-        },
-      })
-    : [];
+            marksCount:
+              scores.length,
+          };
+        })
+        /*
+         * Students with marks first.
+         * Then sort by average descending.
+         */
+        .sort(
+          (a, b) =>
+            b.average - a.average
+        );
 
-  const studentsReport = studentInfo
-    .map((student) => {
-      const entry = studentMap.get(student.id);
+    /*
+     * Assign ranks.
+     *
+     * Students with equal averages receive
+     * the same rank.
+     */
+    let currentRank = 0;
+    let previousAverage:
+      | number
+      | null = null;
 
-      const entryTotal = entry
-        ? Object.values(entry.counts).reduce((sum, value) => sum + value, 0)
+    rankedStudents.forEach(
+      (student, index) => {
+        if (
+          previousAverage === null ||
+          student.average !==
+            previousAverage
+        ) {
+          currentRank = index + 1;
+        }
+
+        student.rank =
+          currentRank;
+
+        previousAverage =
+          student.average;
+      }
+    );
+
+    /*
+     * Calculate class average using students
+     * who have at least one mark.
+     */
+    const studentsWithMarks =
+      rankedStudents.filter(
+        (student) =>
+          student.marksCount > 0
+      );
+
+    const classAverage =
+      studentsWithMarks.length > 0
+        ? studentsWithMarks.reduce(
+            (sum, student) =>
+              sum + student.average,
+            0
+          ) /
+          studentsWithMarks.length
         : 0;
 
-      return {
-        id: student.id,
-        name: `${student.firstName} ${student.lastName}`.trim(),
-        matricule: student.matricule,
-        className: student.classroom?.name ?? null,
-        counts: entry?.counts ?? { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 },
-        total: entryTotal,
-        rate:
-          entry && entryTotal
-            ? round(
-                ((entry.counts.PRESENT + entry.counts.LATE) / entryTotal) * 100,
-                1
-              )
-            : null,
-      };
-    })
-    .sort((a, b) => (a.rate ?? 101) - (b.rate ?? 101));
+    /*
+     * Return only the fields the admin page
+     * needs.
+     */
+    const responseStudents =
+      rankedStudents.map(
+        ({
+          id,
+          name,
+          average,
+          rank,
+        }) => ({
+          id,
+          name,
+          average,
+          rank,
+        })
+      );
 
-  /* ---- daily trend ---- */
-
-  const dayMap = new Map<string, Record<string, number>>();
-
-  for (const row of byDay) {
-    const key = row.date.toISOString().slice(0, 10);
-
-    const entry = dayMap.get(key) ?? {
-      PRESENT: 0,
-      ABSENT: 0,
-      LATE: 0,
-      EXCUSED: 0,
-    };
-
-    entry[row.status] = row._count._all;
-
-    dayMap.set(key, entry);
-  }
-
-  return NextResponse.json({
-    type: "ATTENDANCE",
-    term,
-    generatedAt: new Date().toISOString(),
-    range: {
-      from: options.from ? options.from.toISOString().slice(0, 10) : null,
-      to: options.to ? options.to.toISOString().slice(0, 10) : null,
-      classroomId: options.classroomId ?? null,
-    },
-    summary: {
-      counts,
-      total,
-      rate: total
-        ? round(((counts.PRESENT + counts.LATE) / total) * 100, 1)
-        : null,
-      chronicAbsence: studentsReport.filter(
-        (student) => (student.rate ?? 100) < 75
-      ).length,
-    },
-    classes,
-    students: studentsReport,
-    days: Array.from(dayMap.entries())
-      .map(([date, countsForDay]) => ({
-        date,
-        ...countsForDay,
-        total: Object.values(countsForDay).reduce(
-          (sum, value) => sum + value,
-          0
-        ),
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date)),
-  });
-}
-
-/* =========================================================
-   PERFORMANCE REPORT
-========================================================= */
-
-async function performanceReport(options: { termId?: string | null }) {
-  const term = await resolveTerm(options.termId);
-
-  if (!term) return badRequest("No term available for this report.");
-
-  const [classrooms, marks, attendanceGroups] = await Promise.all([
-    prisma.classroom.findMany({
-      select: {
-        id: true,
-        name: true,
-        section: { select: { name: true } },
-        _count: { select: { students: true } },
-      },
-      orderBy: { name: "asc" },
-    }),
-
-    prisma.mark.findMany({
-      where: { sequence: { termId: term.id } },
-      select: {
-        average: true,
-        studentId: true,
-        student: { select: { classroomId: true } },
-        subject: { select: { id: true, name: true, coefficient: true } },
-      },
-    }),
-
-    prisma.attendance.groupBy({
-      by: ["studentId", "status"],
-      where: { sequence: { termId: term.id } },
-      _count: { _all: true },
-    }),
-  ]);
-
-  /* ---- classes ---- */
-
-  const classStats = new Map<
-    string,
-    { total: number; count: number; passed: number; students: Set<string> }
-  >();
-
-  for (const mark of marks) {
-    const classId = mark.student.classroomId;
-
-    const entry = classStats.get(classId) ?? {
-      total: 0,
-      count: 0,
-      passed: 0,
-      students: new Set<string>(),
-    };
-
-    entry.total += mark.average;
-    entry.count += 1;
-    if (mark.average >= PASS_MARK) entry.passed += 1;
-    entry.students.add(mark.studentId);
-
-    classStats.set(classId, entry);
-  }
-
-  const classes = classrooms
-    .map((classroom) => {
-      const entry = classStats.get(classroom.id);
-
-      return {
+    return NextResponse.json({
+      classroom: {
         id: classroom.id,
         name: classroom.name,
-        sectionName: classroom.section?.name ?? null,
-        students: classroom._count.students,
-        assessed: entry?.students.size ?? 0,
-        marks: entry?.count ?? 0,
-        average: entry && entry.count ? round(entry.total / entry.count) : null,
-        passRate:
-          entry && entry.count
-            ? round((entry.passed / entry.count) * 100, 1)
-            : null,
-      };
-    })
-    .sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
+      },
 
-  /* ---- subjects ---- */
+      term: {
+        id: term.id,
+        name: term.name,
+      },
 
-  const subjectStats = new Map<
-    string,
-    {
-      name: string;
-      coefficient: number;
-      total: number;
-      count: number;
-      passed: number;
-      highest: number;
-      lowest: number;
-    }
-  >();
+      sequence: {
+        id: sequence.id,
+        name: sequence.name,
+      },
 
-  for (const mark of marks) {
-    const entry = subjectStats.get(mark.subject.id) ?? {
-      name: mark.subject.name,
-      coefficient: mark.subject.coefficient,
-      total: 0,
-      count: 0,
-      passed: 0,
-      highest: mark.average,
-      lowest: mark.average,
-    };
+      /*
+       * REAL publication state.
+       */
+      publication: {
+        published: isPublished,
 
-    entry.total += mark.average;
-    entry.count += 1;
-    if (mark.average >= PASS_MARK) entry.passed += 1;
-    entry.highest = Math.max(entry.highest, mark.average);
-    entry.lowest = Math.min(entry.lowest, mark.average);
+        status:
+          publication?.status ??
+          "UNPUBLISHED",
 
-    subjectStats.set(mark.subject.id, entry);
+        publishedAt:
+          publication?.publishedAt ??
+          null,
+
+        publishedById:
+          publication?.publishedById ??
+          null,
+
+        notes:
+          publication?.notes ??
+          null,
+      },
+
+      summary: {
+        totalStudents:
+          responseStudents.length,
+
+        classAverage: Number(
+          classAverage.toFixed(2)
+        ),
+
+        published: isPublished,
+      },
+
+      students:
+        responseStudents,
+    });
+  } catch (error) {
+    return serverError(
+      "ADMIN REPORT CARD GENERATION ERROR",
+      error
+    );
   }
-
-  const subjects = Array.from(subjectStats.entries())
-    .map(([id, entry]) => ({
-      id,
-      name: entry.name,
-      coefficient: entry.coefficient,
-      recorded: entry.count,
-      average: round(entry.total / entry.count),
-      passRate: round((entry.passed / entry.count) * 100, 1),
-      highest: round(entry.highest),
-      lowest: round(entry.lowest),
-    }))
-    .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
-
-  /* ---- students ranking ---- */
-
-  const studentStats = new Map<string, { total: number; count: number }>();
-
-  for (const mark of marks) {
-    const entry = studentStats.get(mark.studentId) ?? { total: 0, count: 0 };
-
-    entry.total += mark.average;
-    entry.count += 1;
-
-    studentStats.set(mark.studentId, entry);
-  }
-
-  const studentIds = Array.from(studentStats.keys());
-
-  const studentInfo = studentIds.length
-    ? await prisma.student.findMany({
-        where: { id: { in: studentIds } },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          matricule: true,
-          classroom: { select: { id: true, name: true } },
-        },
-      })
-    : [];
-
-  const attendanceMap = new Map<string, { total: number; attended: number }>();
-
-  for (const row of attendanceGroups) {
-    const entry = attendanceMap.get(row.studentId) ?? {
-      total: 0,
-      attended: 0,
-    };
-
-    entry.total += row._count._all;
-
-    if (row.status === "PRESENT" || row.status === "LATE") {
-      entry.attended += row._count._all;
-    }
-
-    attendanceMap.set(row.studentId, entry);
-  }
-
-  const topStudents = studentInfo
-    .map((student) => {
-      const stats = studentStats.get(student.id);
-      const attendanceEntry = attendanceMap.get(student.id);
-      const average = stats && stats.count ? stats.total / stats.count : null;
-
-      return {
-        id: student.id,
-        name: `${student.firstName} ${student.lastName}`.trim(),
-        matricule: student.matricule,
-        className: student.classroom?.name ?? null,
-        average: round(average),
-        grade: average === null ? null : gradeOf(average),
-        attendanceRate: attendanceEntry
-          ? round((attendanceEntry.attended / attendanceEntry.total) * 100, 1)
-          : null,
-      };
-    })
-    .sort((a, b) => (b.average ?? -1) - (a.average ?? -1));
-
-  const allAverages = topStudents
-    .map((student) => student.average)
-    .filter((value): value is number => value !== null);
-
-  const globalAverage = allAverages.length
-    ? round(allAverages.reduce((sum, value) => sum + value, 0) / allAverages.length)
-    : null;
-
-  return NextResponse.json({
-    type: "PERFORMANCE",
-    term,
-    generatedAt: new Date().toISOString(),
-    summary: {
-      classes: classes.length,
-      subjects: subjects.length,
-      marks: marks.length,
-      students: topStudents.length,
-      average: globalAverage,
-      passRate: allAverages.length
-        ? round(
-            (allAverages.filter((value) => value >= PASS_MARK).length /
-              allAverages.length) *
-              100,
-            1
-          )
-        : null,
-      strongestSubject: subjects.length ? subjects[0].name : null,
-      weakestSubject: subjects.length ? subjects[subjects.length - 1].name : null,
-    },
-    classes,
-    subjects,
-    topStudents: topStudents.slice(0, 20),
-    bottomStudents: topStudents.slice(-10).reverse(),
-  });
 }

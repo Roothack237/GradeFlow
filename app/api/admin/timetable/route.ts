@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+
 import {
   Role,
   WeekDay,
@@ -10,6 +12,18 @@ import {
 
 // ======================================================
 // TIMETABLE SETTINGS
+// ======================================================
+//
+// School timetable:
+//
+// 08:00 - 10:00   Lesson
+// 10:00 - 10:15   Break
+// 10:15 - 12:00   Lesson
+// 12:00 - 12:30   Break
+// 12:30 - 14:30   Lesson
+// 14:30 - 15:00   Revision / Class Activity
+//
+// Breaks and revision are NOT stored as Timetable records.
 // ======================================================
 
 const DAYS: WeekDay[] = [
@@ -21,14 +35,18 @@ const DAYS: WeekDay[] = [
 ];
 
 const TIME_SLOTS = [
-  { startTime: "08:00", endTime: "09:00" },
-  { startTime: "09:00", endTime: "10:00" },
-  { startTime: "10:00", endTime: "11:00" },
-  { startTime: "11:00", endTime: "12:00" },
-  { startTime: "12:00", endTime: "13:00" },
-  { startTime: "13:00", endTime: "14:00" },
-  { startTime: "14:00", endTime: "15:00" },
-  { startTime: "15:00", endTime: "16:00" },
+  {
+    startTime: "08:00",
+    endTime: "10:00",
+  },
+  {
+    startTime: "10:15",
+    endTime: "12:00",
+  },
+  {
+    startTime: "12:30",
+    endTime: "14:30",
+  },
 ];
 
 // ======================================================
@@ -37,8 +55,14 @@ const TIME_SLOTS = [
 
 function timeToMinutes(time: string): number {
   const [hours, minutes] = time.split(":").map(Number);
+
   return hours * 60 + minutes;
 }
+
+// ------------------------------------------------------
+// Check whether a lesson completely fits inside one
+// approved teacher availability period.
+// ------------------------------------------------------
 
 function isWithinAvailability(
   startTime: string,
@@ -51,14 +75,23 @@ function isWithinAvailability(
   const lessonStart = timeToMinutes(startTime);
   const lessonEnd = timeToMinutes(endTime);
 
-  const availableStart = timeToMinutes(availability.startTime);
-  const availableEnd = timeToMinutes(availability.endTime);
+  const availableStart = timeToMinutes(
+    availability.startTime
+  );
+
+  const availableEnd = timeToMinutes(
+    availability.endTime
+  );
 
   return (
     lessonStart >= availableStart &&
     lessonEnd <= availableEnd
   );
 }
+
+// ------------------------------------------------------
+// Check whether two time periods overlap.
+// ------------------------------------------------------
 
 function overlaps(
   startA: string,
@@ -75,6 +108,39 @@ function overlaps(
   return aStart < bEnd && bStart < aEnd;
 }
 
+// ------------------------------------------------------
+// Convert WeekDay to numeric day.
+//
+// TeacherAvailability uses:
+// 1 = Monday
+// 2 = Tuesday
+// 3 = Wednesday
+// 4 = Thursday
+// 5 = Friday
+// ------------------------------------------------------
+
+function weekDayToDayNumber(day: WeekDay): number {
+  switch (day) {
+    case WeekDay.MONDAY:
+      return 1;
+
+    case WeekDay.TUESDAY:
+      return 2;
+
+    case WeekDay.WEDNESDAY:
+      return 3;
+
+    case WeekDay.THURSDAY:
+      return 4;
+
+    case WeekDay.FRIDAY:
+      return 5;
+
+    default:
+      return 0;
+  }
+}
+
 // ======================================================
 // GET - LOAD TIMETABLE DATA
 // ======================================================
@@ -87,9 +153,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    // --------------------------------------------------
+    // ==================================================
     // AUTHENTICATION
-    // --------------------------------------------------
+    // ==================================================
 
     const session = await auth();
 
@@ -103,9 +169,9 @@ export async function GET(request: Request) {
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // VERIFY ADMIN
-    // --------------------------------------------------
+    // ==================================================
 
     const admin = await prisma.user.findUnique({
       where: {
@@ -143,15 +209,16 @@ export async function GET(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "Administrator privileges are required.",
+          error:
+            "Administrator privileges are required.",
         },
         { status: 403 }
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // REQUEST PARAMETERS
-    // --------------------------------------------------
+    // ==================================================
 
     const { searchParams } = new URL(request.url);
 
@@ -160,13 +227,24 @@ export async function GET(request: Request) {
 
     const termId = searchParams.get("termId");
 
-    console.log("========== TIMETABLE GET ==========");
-    console.log("Academic Year:", academicYearId);
+    console.log(
+      "========== TIMETABLE GET =========="
+    );
+
+    console.log(
+      "Academic Year:",
+      academicYearId
+    );
+
     console.log("Term:", termId);
 
-    // --------------------------------------------------
+    console.log(
+      "==================================="
+    );
+
+    // ==================================================
     // ACADEMIC YEARS
-    // --------------------------------------------------
+    // ==================================================
 
     const academicYears =
       await prisma.academicYear.findMany({
@@ -182,9 +260,48 @@ export async function GET(request: Request) {
         },
       });
 
-    // --------------------------------------------------
+    // ==================================================
+    // CLASSROOMS
+    // ==================================================
+    //
+    // IMPORTANT:
+    // The timetable page needs classrooms for the
+    // "Select class" dropdown.
+    //
+    // We return section as a simple string because
+    // the frontend Classroom type expects:
+    //
+    // section?: string | null
+    //
+    // ==================================================
+
+    const classrooms =
+      await prisma.classroom.findMany({
+        orderBy: {
+          name: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          section: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+    const formattedClassrooms =
+      classrooms.map((classroom) => ({
+        id: classroom.id,
+        name: classroom.name,
+        section:
+          classroom.section?.name ?? null,
+      }));
+
+    // ==================================================
     // TEACHERS + AVAILABILITY + ASSIGNMENTS
-    // --------------------------------------------------
+    // ==================================================
 
     const teachers =
       await prisma.teacher.findMany({
@@ -201,16 +318,23 @@ export async function GET(request: Request) {
           phone: true,
 
           availability: {
-            orderBy: {
-              startTime: "asc",
-            },
+            orderBy: [
+              {
+                dayOfWeek: "asc",
+              },
+              {
+                startTime: "asc",
+              },
+            ],
             select: {
               id: true,
-              day: true,
+              teacherId: true,
+              dayOfWeek: true,
               startTime: true,
               endTime: true,
               status: true,
-              note: true,
+              createdAt: true,
+              updatedAt: true,
             },
           },
 
@@ -245,9 +369,9 @@ export async function GET(request: Request) {
         },
       });
 
-    // --------------------------------------------------
+    // ==================================================
     // AVAILABILITY SUMMARY
-    // --------------------------------------------------
+    // ==================================================
 
     const availabilitySummary = teachers.map(
       (teacher) => {
@@ -303,15 +427,18 @@ export async function GET(request: Request) {
 
           status,
 
-          availability: teacher.availability,
-          assignments: teacher.assignments,
+          availability:
+            teacher.availability,
+
+          assignments:
+            teacher.assignments,
         };
       }
     );
 
-    // --------------------------------------------------
+    // ==================================================
     // AVAILABILITY COUNTS
-    // --------------------------------------------------
+    // ==================================================
 
     const availabilityCounts = {
       totalTeachers: teachers.length,
@@ -341,9 +468,9 @@ export async function GET(request: Request) {
         ).length,
     };
 
-    // --------------------------------------------------
+    // ==================================================
     // TIMETABLE
-    // --------------------------------------------------
+    // ==================================================
 
     const timetableWhere: {
       academicYearId?: string;
@@ -422,9 +549,9 @@ export async function GET(request: Request) {
         ],
       });
 
-    // --------------------------------------------------
+    // ==================================================
     // PUBLICATIONS
-    // --------------------------------------------------
+    // ==================================================
 
     const publicationWhere: {
       termId?: string;
@@ -455,42 +582,54 @@ export async function GET(request: Request) {
         },
       });
 
-    // --------------------------------------------------
+    // ==================================================
     // RESPONSE
-    // --------------------------------------------------
+    // ==================================================
 
     return NextResponse.json({
       success: true,
 
+      // Academic years with their terms
       academicYears,
 
-      availabilitySummary,
+      // IMPORTANT: classrooms are now returned
+      classrooms: formattedClassrooms,
 
+      // Teacher availability
+      availabilitySummary,
       availabilityCounts,
 
+      // Timetable
       timetable,
 
-      publications: publications.map(
-        (publication) => ({
-          id: publication.id,
-          termId: publication.termId,
-          classroomId:
-            publication.classroomId,
+      // Publications
+      publications:
+        publications.map(
+          (publication) => ({
+            id: publication.id,
 
-          class:
-            publication.classroom.name,
+            termId:
+              publication.termId,
 
-          term:
-            publication.term.name,
+            classroomId:
+              publication.classroomId,
 
-          status: publication.status,
+            class:
+              publication.classroom.name,
 
-          publishedAt:
-            publication.publishedAt,
+            term:
+              publication.term.name,
 
-          notes: publication.notes,
-        })
-      ),
+            status:
+              publication.status,
+
+            publishedAt:
+              publication.publishedAt,
+
+            notes:
+              publication.notes,
+          })
+        ),
     });
   } catch (error) {
     console.error(
@@ -510,7 +649,9 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to load timetable data.",
+        error:
+          "Failed to load timetable data.",
+
         message:
           error instanceof Error
             ? error.message
@@ -533,9 +674,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    // --------------------------------------------------
+    // ==================================================
     // AUTHENTICATION
-    // --------------------------------------------------
+    // ==================================================
 
     const session = await auth();
 
@@ -549,14 +690,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // VERIFY ADMIN
-    // --------------------------------------------------
+    // ==================================================
 
     const admin = await prisma.user.findUnique({
       where: {
         email: session.user.email,
       },
+
       select: {
         id: true,
         email: true,
@@ -579,7 +721,8 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: "This account has been suspended.",
+          error:
+            "This account has been suspended.",
         },
         { status: 403 }
       );
@@ -596,9 +739,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // --------------------------------------------------
-    // REQUEST BODY
-    // --------------------------------------------------
+    // ==================================================
+    // REQUEST
+    // ==================================================
 
     const body = await request.json();
 
@@ -618,16 +761,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // VERIFY TERM
-    // --------------------------------------------------
+    // ==================================================
 
-    const term = await prisma.term.findFirst({
-      where: {
-        id: termId,
-        academicYearId,
-      },
-    });
+    const term =
+      await prisma.term.findFirst({
+        where: {
+          id: termId,
+          academicYearId,
+        },
+      });
 
     if (!term) {
       return NextResponse.json(
@@ -640,9 +784,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // GET TEACHER ASSIGNMENTS
-    // --------------------------------------------------
+    // ==================================================
 
     const assignments =
       await prisma.teacherAssignment.findMany({
@@ -683,38 +827,27 @@ export async function POST(request: Request) {
         },
       });
 
-    if (assignments.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "No teacher assignments exist yet.",
-        },
-        { status: 409 }
-      );
-    }
+    // ==================================================
+    // GET ALL AVAILABILITY
+    // ==================================================
 
-    // --------------------------------------------------
-    // APPROVED AVAILABILITY
-    // --------------------------------------------------
-
-    const approvedAvailability =
+    const allAvailability =
       await prisma.teacherAvailability.findMany({
-        where: {
-          status:
-            AvailabilityStatus.APPROVED,
-        },
-
         select: {
+          id: true,
           teacherId: true,
-          day: true,
+          dayOfWeek: true,
           startTime: true,
           endTime: true,
+          status: true,
         },
 
         orderBy: [
           {
-            day: "asc",
+            teacherId: "asc",
+          },
+          {
+            dayOfWeek: "asc",
           },
           {
             startTime: "asc",
@@ -722,9 +855,209 @@ export async function POST(request: Request) {
         ],
       });
 
-    // --------------------------------------------------
-    // GROUP AVAILABILITY BY TEACHER
-    // --------------------------------------------------
+    // ==================================================
+    // AVAILABILITY COUNTS
+    // ==================================================
+
+    const approvedAvailability =
+      allAvailability.filter(
+        (item) =>
+          item.status ===
+          AvailabilityStatus.APPROVED
+      );
+
+    const pendingAvailability =
+      allAvailability.filter(
+        (item) =>
+          item.status ===
+          AvailabilityStatus.PENDING
+      );
+
+    const rejectedAvailability =
+      allAvailability.filter(
+        (item) =>
+          item.status ===
+          AvailabilityStatus.REJECTED
+      );
+
+    // ==================================================
+    // DEBUG INFORMATION
+    // ==================================================
+
+    console.log(
+      "=========================================="
+    );
+
+    console.log(
+      "SCHOOL TIMETABLE GENERATION"
+    );
+
+    console.log(
+      "Academic Year:",
+      academicYearId
+    );
+
+    console.log(
+      "Term:",
+      termId
+    );
+
+    console.log(
+      "Teacher Assignments:",
+      assignments.length
+    );
+
+    console.log(
+      "Total Availability:",
+      allAvailability.length
+    );
+
+    console.log(
+      "Approved Availability:",
+      approvedAvailability.length
+    );
+
+    console.log(
+      "Pending Availability:",
+      pendingAvailability.length
+    );
+
+    console.log(
+      "Rejected Availability:",
+      rejectedAvailability.length
+    );
+
+    console.log(
+      "=========================================="
+    );
+
+    // ==================================================
+    // NO ASSIGNMENTS
+    // ==================================================
+
+    if (assignments.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "No teacher assignments exist.",
+
+          diagnostics: {
+            assignments: 0,
+
+            availability:
+              allAvailability.length,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
+    // ==================================================
+    // NO AVAILABILITY
+    // ==================================================
+
+    if (allAvailability.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "No teacher availability has been submitted yet.",
+
+          message:
+            "Teachers must submit their availability before the timetable can be generated.",
+
+          diagnostics: {
+            assignments:
+              assignments.length,
+
+            totalAvailability: 0,
+
+            approvedAvailability: 0,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
+    // ==================================================
+    // NO APPROVED AVAILABILITY
+    // ==================================================
+
+    if (approvedAvailability.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "No approved teacher availability exists.",
+
+          message:
+            "Teachers have submitted availability, but the administrator must approve availability before generating the timetable.",
+
+          diagnostics: {
+            assignments:
+              assignments.length,
+
+            totalAvailability:
+              allAvailability.length,
+
+            approvedAvailability: 0,
+
+            pendingAvailability:
+              pendingAvailability.length,
+
+            rejectedAvailability:
+              rejectedAvailability.length,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
+    // ==================================================
+    // CHECK EXISTING TIMETABLE
+    // ==================================================
+    //
+    // Regenerate timetable for the selected
+    // academic year and term.
+    // ==================================================
+
+    const existingCount =
+      await prisma.timetable.count({
+        where: {
+          academicYearId,
+          termId,
+        },
+      });
+
+    console.log(
+      "Existing timetable entries:",
+      existingCount
+    );
+
+    // ==================================================
+    // CLEAR EXISTING TIMETABLE
+    // ==================================================
+
+    if (existingCount > 0) {
+      await prisma.timetable.deleteMany({
+        where: {
+          academicYearId,
+          termId,
+        },
+      });
+
+      console.log(
+        `Deleted ${existingCount} existing timetable entries before regeneration.`
+      );
+    }
+
+    // ==================================================
+    // GROUP APPROVED AVAILABILITY BY TEACHER
+    // ==================================================
 
     const availabilityByTeacher =
       new Map<
@@ -746,78 +1079,30 @@ export async function POST(request: Request) {
       );
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // EXISTING TIMETABLE
-    // --------------------------------------------------
+    // ==================================================
 
-    const existingTimetable =
-      await prisma.timetable.findMany({
-        where: {
-          academicYearId,
-          termId,
-        },
+    const existingTimetable: Array<{
+      id: string;
+      teacherId: string;
+      classroomId: string;
+      subjectId: string;
+      day: WeekDay;
+      startTime: string;
+      endTime: string;
+    }> = [];
 
-        select: {
-          id: true,
-          teacherId: true,
-          classroomId: true,
-          subjectId: true,
-          day: true,
-          startTime: true,
-          endTime: true,
-        },
-      });
-
-    // --------------------------------------------------
-    // TRACK SCHEDULED ASSIGNMENTS
-    // --------------------------------------------------
+    // ==================================================
+    // TRACK EXISTING ASSIGNMENTS
+    // ==================================================
 
     const scheduledAssignmentKeys =
       new Set<string>();
 
-    for (const entry of existingTimetable) {
-      const key = [
-        entry.teacherId,
-        entry.classroomId,
-        entry.subjectId,
-      ].join("|");
-
-      scheduledAssignmentKeys.add(key);
-    }
-
-    // --------------------------------------------------
-    // TRACK OCCUPIED SLOTS
-    // --------------------------------------------------
-
-    const occupiedTeacherSlots =
-      new Set<string>();
-
-    const occupiedClassroomSlots =
-      new Set<string>();
-
-    for (const entry of existingTimetable) {
-      occupiedTeacherSlots.add(
-        [
-          entry.teacherId,
-          entry.day,
-          entry.startTime,
-          entry.endTime,
-        ].join("|")
-      );
-
-      occupiedClassroomSlots.add(
-        [
-          entry.classroomId,
-          entry.day,
-          entry.startTime,
-          entry.endTime,
-        ].join("|")
-      );
-    }
-
-    // --------------------------------------------------
-    // NEW ENTRIES
-    // --------------------------------------------------
+    // ==================================================
+    // RESULTS
+    // ==================================================
 
     const newEntries: Array<{
       classroomId: string;
@@ -832,18 +1117,16 @@ export async function POST(request: Request) {
 
     const unscheduled: Array<{
       assignmentId: string;
-      teacherId: string;
       teacherName: string;
       teacherCode: string;
       classroomName: string;
       subjectName: string;
-      subjectCode: string;
       reason: string;
     }> = [];
 
-    // --------------------------------------------------
-    // PROCESS ASSIGNMENTS
-    // --------------------------------------------------
+    // ==================================================
+    // PROCESS EACH TEACHER ASSIGNMENT
+    // ==================================================
 
     for (const assignment of assignments) {
       const assignmentKey = [
@@ -851,6 +1134,10 @@ export async function POST(request: Request) {
         assignment.classroomId,
         assignment.subjectId,
       ].join("|");
+
+      // ------------------------------------------------
+      // Already scheduled
+      // ------------------------------------------------
 
       if (
         scheduledAssignmentKeys.has(
@@ -860,29 +1147,34 @@ export async function POST(request: Request) {
         continue;
       }
 
+      // ------------------------------------------------
+      // GET TEACHER APPROVED AVAILABILITY
+      // ------------------------------------------------
+
       const teacherAvailability =
         availabilityByTeacher.get(
           assignment.teacherId
         ) ?? [];
 
-      if (
-        teacherAvailability.length === 0
-      ) {
+      if (teacherAvailability.length === 0) {
         unscheduled.push({
-          assignmentId: assignment.id,
-          teacherId: assignment.teacher.id,
+          assignmentId:
+            assignment.id,
+
           teacherName:
             assignment.teacher.fullName,
+
           teacherCode:
             assignment.teacher.teacherId,
+
           classroomName:
             assignment.classroom.name,
+
           subjectName:
             assignment.subject.name,
-          subjectCode:
-            assignment.subject.code,
+
           reason:
-            "Teacher has no approved availability.",
+            "This teacher has no APPROVED availability.",
         });
 
         continue;
@@ -890,29 +1182,43 @@ export async function POST(request: Request) {
 
       let assigned = false;
 
-      // ------------------------------------------------
-      // SEARCH FOR SLOT
-      // ------------------------------------------------
+      // =================================================
+      // SEARCH MONDAY - FRIDAY
+      // =================================================
 
       for (const day of DAYS) {
-        if (assigned) break;
+        if (assigned) {
+          break;
+        }
+
+        const dayNumber =
+          weekDayToDayNumber(day);
 
         const dayAvailability =
           teacherAvailability.filter(
             (availability) =>
-              availability.day === day
+              availability.dayOfWeek ===
+              dayNumber
           );
 
-        if (
-          dayAvailability.length === 0
-        ) {
+        if (dayAvailability.length === 0) {
           continue;
         }
 
-        for (const slot of TIME_SLOTS) {
-          if (assigned) break;
+        // ===============================================
+        // SEARCH THE THREE REAL LESSON PERIODS
+        // ===============================================
 
-          const available =
+        for (const slot of TIME_SLOTS) {
+          if (assigned) {
+            break;
+          }
+
+          // ---------------------------------------------
+          // Check teacher availability
+          // ---------------------------------------------
+
+          const fitsAvailability =
             dayAvailability.some(
               (availability) =>
                 isWithinAvailability(
@@ -922,117 +1228,81 @@ export async function POST(request: Request) {
                 )
             );
 
-          if (!available) {
+          if (!fitsAvailability) {
             continue;
           }
 
-          // --------------------------------------------
-          // TEACHER CONFLICT
-          // --------------------------------------------
+          // ---------------------------------------------
+          // Check teacher conflict
+          // ---------------------------------------------
 
           const teacherConflict =
-            occupiedTeacherSlots.has(
-              [
-                assignment.teacherId,
-                day,
-                slot.startTime,
-                slot.endTime,
-              ].join("|")
+            existingTimetable.some(
+              (entry) =>
+                entry.teacherId ===
+                  assignment.teacherId &&
+                entry.day === day &&
+                overlaps(
+                  slot.startTime,
+                  slot.endTime,
+                  entry.startTime,
+                  entry.endTime
+                )
+            ) ||
+            newEntries.some(
+              (entry) =>
+                entry.teacherId ===
+                  assignment.teacherId &&
+                entry.day === day &&
+                overlaps(
+                  slot.startTime,
+                  slot.endTime,
+                  entry.startTime,
+                  entry.endTime
+                )
             );
 
           if (teacherConflict) {
             continue;
           }
 
-          // --------------------------------------------
-          // CLASSROOM CONFLICT
-          // --------------------------------------------
+          // ---------------------------------------------
+          // Check classroom conflict
+          // ---------------------------------------------
 
           const classroomConflict =
-            occupiedClassroomSlots.has(
-              [
-                assignment.classroomId,
-                day,
-                slot.startTime,
-                slot.endTime,
-              ].join("|")
+            existingTimetable.some(
+              (entry) =>
+                entry.classroomId ===
+                  assignment.classroomId &&
+                entry.day === day &&
+                overlaps(
+                  slot.startTime,
+                  slot.endTime,
+                  entry.startTime,
+                  entry.endTime
+                )
+            ) ||
+            newEntries.some(
+              (entry) =>
+                entry.classroomId ===
+                  assignment.classroomId &&
+                entry.day === day &&
+                overlaps(
+                  slot.startTime,
+                  slot.endTime,
+                  entry.startTime,
+                  entry.endTime
+                )
             );
 
           if (classroomConflict) {
             continue;
           }
 
-          // --------------------------------------------
-          // TEACHER OVERLAP
-          // --------------------------------------------
-
-          const hasTeacherOverlap =
-            existingTimetable.some(
-              (entry) =>
-                entry.teacherId ===
-                  assignment.teacherId &&
-                entry.day === day &&
-                overlaps(
-                  slot.startTime,
-                  slot.endTime,
-                  entry.startTime,
-                  entry.endTime
-                )
-            ) ||
-            newEntries.some(
-              (entry) =>
-                entry.teacherId ===
-                  assignment.teacherId &&
-                entry.day === day &&
-                overlaps(
-                  slot.startTime,
-                  slot.endTime,
-                  entry.startTime,
-                  entry.endTime
-                )
-            );
-
-          if (hasTeacherOverlap) {
-            continue;
-          }
-
-          // --------------------------------------------
-          // CLASSROOM OVERLAP
-          // --------------------------------------------
-
-          const hasClassroomOverlap =
-            existingTimetable.some(
-              (entry) =>
-                entry.classroomId ===
-                  assignment.classroomId &&
-                entry.day === day &&
-                overlaps(
-                  slot.startTime,
-                  slot.endTime,
-                  entry.startTime,
-                  entry.endTime
-                )
-            ) ||
-            newEntries.some(
-              (entry) =>
-                entry.classroomId ===
-                  assignment.classroomId &&
-                entry.day === day &&
-                overlaps(
-                  slot.startTime,
-                  slot.endTime,
-                  entry.startTime,
-                  entry.endTime
-                )
-            );
-
-          if (hasClassroomOverlap) {
-            continue;
-          }
-
-          // --------------------------------------------
-          // CREATE ENTRY
-          // --------------------------------------------
+          // ---------------------------------------------
+          // Create timetable entry
+          // ---------------------------------------------
 
           const newEntry = {
             classroomId:
@@ -1059,59 +1329,46 @@ export async function POST(request: Request) {
 
           newEntries.push(newEntry);
 
-          occupiedTeacherSlots.add(
-            [
-              assignment.teacherId,
-              day,
-              slot.startTime,
-              slot.endTime,
-            ].join("|")
-          );
-
-          occupiedClassroomSlots.add(
-            [
-              assignment.classroomId,
-              day,
-              slot.startTime,
-              slot.endTime,
-            ].join("|")
-          );
-
           scheduledAssignmentKeys.add(
             assignmentKey
           );
 
           assigned = true;
+
+          break;
         }
       }
 
-      // ------------------------------------------------
-      // UNSCHEDULED
-      // ------------------------------------------------
+      // =================================================
+      // ASSIGNMENT COULD NOT BE SCHEDULED
+      // =================================================
 
       if (!assigned) {
         unscheduled.push({
-          assignmentId: assignment.id,
-          teacherId: assignment.teacher.id,
+          assignmentId:
+            assignment.id,
+
           teacherName:
             assignment.teacher.fullName,
+
           teacherCode:
             assignment.teacher.teacherId,
+
           classroomName:
             assignment.classroom.name,
+
           subjectName:
             assignment.subject.name,
-          subjectCode:
-            assignment.subject.code,
+
           reason:
-            "No free timetable slot matches the teacher's approved availability.",
+            "All available periods create a teacher or classroom conflict.",
         });
       }
     }
 
-    // --------------------------------------------------
-    // SAVE
-    // --------------------------------------------------
+    // ==================================================
+    // SAVE NEW ENTRIES
+    // ==================================================
 
     if (newEntries.length > 0) {
       await prisma.timetable.createMany({
@@ -1119,9 +1376,9 @@ export async function POST(request: Request) {
       });
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // LOAD FINAL TIMETABLE
-    // --------------------------------------------------
+    // ==================================================
 
     const finalTimetable =
       await prisma.timetable.findMany({
@@ -1174,21 +1431,34 @@ export async function POST(request: Request) {
         ],
       });
 
-    // --------------------------------------------------
+    // ==================================================
+    // CALCULATE GENERATION STATUS
+    // ==================================================
+
+    const scheduledAssignmentCount =
+      assignments.length -
+      unscheduled.length;
+
+    const generationComplete =
+      unscheduled.length === 0;
+
+    // ==================================================
     // RESPONSE
-    // --------------------------------------------------
+    // ==================================================
 
     return NextResponse.json({
       success: true,
 
       message:
         newEntries.length > 0
-          ? `Timetable updated successfully. ${newEntries.length} new period${
+          ? `Timetable regenerated successfully. ${
+              newEntries.length
+            } period${
               newEntries.length === 1
                 ? ""
                 : "s"
-            } added.`
-          : "No new assignments could be scheduled. Existing timetable was kept unchanged.",
+            } created.`
+          : "Timetable regenerated, but no assignments could be scheduled.",
 
       createdCount:
         newEntries.length,
@@ -1196,14 +1466,94 @@ export async function POST(request: Request) {
       totalScheduled:
         finalTimetable.length,
 
+      scheduledAssignments:
+        scheduledAssignmentCount,
+
+      totalAssignments:
+        assignments.length,
+
       unscheduled,
+
+      generationComplete,
 
       timetable:
         finalTimetable,
+
+      timetableRules: {
+        schoolStart: "08:00",
+
+        schoolEnd: "15:00",
+
+        lessonPeriods:
+          TIME_SLOTS,
+
+        breaks: [
+          {
+            startTime: "10:00",
+            endTime: "10:15",
+          },
+          {
+            startTime: "12:00",
+            endTime: "12:30",
+          },
+        ],
+
+        revisionPeriod: {
+          startTime: "14:30",
+          endTime: "15:00",
+        },
+
+        days: DAYS,
+      },
+
+      diagnostics: {
+        totalAssignments:
+          assignments.length,
+
+        totalAvailability:
+          allAvailability.length,
+
+        approvedAvailability:
+          approvedAvailability.length,
+
+        pendingAvailability:
+          pendingAvailability.length,
+
+        rejectedAvailability:
+          rejectedAvailability.length,
+
+        assignmentsWithoutAvailability:
+          unscheduled.filter(
+            (item) =>
+              item.reason.includes(
+                "no APPROVED availability"
+              )
+          ).length,
+
+        assignmentsWithoutSlot:
+          unscheduled.filter(
+            (item) =>
+              item.reason.includes(
+                "teacher or classroom conflict"
+              )
+          ).length,
+
+        createdEntries:
+          newEntries.length,
+
+        existingEntriesBeforeRegeneration:
+          existingCount,
+
+        deletedEntries:
+          existingCount,
+
+        finalEntries:
+          finalTimetable.length,
+      },
     });
   } catch (error) {
     console.error(
-      "========================================"
+      "=========================================="
     );
 
     console.error(
@@ -1213,14 +1563,16 @@ export async function POST(request: Request) {
     console.error(error);
 
     console.error(
-      "========================================"
+      "=========================================="
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
           "Failed to generate timetable.",
+
         message:
           error instanceof Error
             ? error.message

@@ -82,8 +82,12 @@ export default function TeacherSidebar() {
               onClick={closeSidebar}
               className="flex items-center gap-3"
             >
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-700 text-white">
-                <GraduationCap size={26} />
+             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-700 text-white overflow-hidden">
+                <img
+                  src="/images/logo.png"
+                  alt="GradeFlow Logo"
+                  className="h-full w-full object-contain"
+                />
               </div>
 
               <div>
@@ -136,7 +140,7 @@ export default function TeacherSidebar() {
               <SidebarLink
                 href="/teacher/attendance"
                 icon={<ClipboardCheck size={19} />}
-                label="Attendance"
+                label="Mark Attendance"
                 active={pathname.startsWith("/teacher/attendance")}
                 onClick={closeSidebar}
               />
@@ -144,7 +148,7 @@ export default function TeacherSidebar() {
               <SidebarLink
                 href="/teacher/marks"
                 icon={<BookOpen size={19} />}
-                label="Marks"
+                label="Grade Students"
                 active={pathname.startsWith("/teacher/marks")}
                 onClick={closeSidebar}
               />
@@ -211,6 +215,12 @@ export default function TeacherSidebar() {
                 label="Parent Messages"
                 active={pathname.startsWith("/teacher/messages")}
                 onClick={closeSidebar}
+              />
+
+              <SidebarLink
+                href="/class-groups"
+                icon={<MessageSquare size={19} />}
+                label="Class Groups"
               />
 
               <SidebarLink

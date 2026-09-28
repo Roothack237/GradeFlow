@@ -164,6 +164,12 @@ const NAV_GROUPS: NavGroup[] = [
         label: "Settings",
         icon: <Settings size={19} />,
       },
+      {
+        href: "/admin/profile",
+        label: "Profile",
+        icon: <Settings size={19} />,
+      },
+      
     ],
   },
 ];
@@ -247,8 +253,12 @@ export default function Sidebar({
 
           <div className="flex h-20 items-center justify-between border-b border-gray-200 px-6 dark:border-gray-800">
             <Link href="/admin/dashboard" onClick={closeSidebar} className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-700 text-white">
-                <GraduationCap size={26} />
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-700 text-white overflow-hidden">
+                <img
+                  src="/images/logo.png"
+                  alt="GradeFlow Logo"
+                  className="h-full w-full object-contain"
+                />
               </div>
 
               <div>

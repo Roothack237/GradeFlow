@@ -78,7 +78,6 @@ export type SubjectLine = {
   code: string;
   coefficient: number;
   teacher: string | null;
-
   sequences: SequenceMark[];
 
   /**
@@ -98,12 +97,10 @@ export type SubjectLine = {
 export type AttendanceSummary = {
   PRESENT: number;
   ABSENT: number;
-  LATE: number;
   EXCUSED: number;
   total: number;
   rate: number | null;
   absentHours: number;
-  lateHours: number;
 };
 
 export type ReportCardData = {
@@ -281,6 +278,7 @@ export async function buildTermReportCards(
    * Term 3:
    * Fifth Sequence + Sixth Sequence
    */
+
   const sequenceIds = term.sequences.map(
     (sequence) => sequence.id
   );
@@ -288,6 +286,7 @@ export async function buildTermReportCards(
   /**
    * If the term has no sequences, there cannot be marks.
    */
+
   if (!sequenceIds.length) {
     return {
       cards: [],
@@ -302,14 +301,6 @@ export async function buildTermReportCards(
    * -------------------------------------------------------
    * 2. LOAD CLASSROOMS + STUDENTS + ASSIGNMENTS
    * -------------------------------------------------------
-   *
-   * IMPORTANT:
-   *
-   * We deliberately do NOT use enrolledOnly() here.
-   *
-   * The marks table is linked directly to Student.
-   * Therefore we must first obtain the students actually
-   * belonging to this classroom, then find their marks.
    */
 
   const classrooms = await prisma.classroom.findMany({
@@ -443,24 +434,8 @@ export async function buildTermReportCards(
     termPublications,
   ] = await Promise.all([
     /**
-     * -----------------------------------------------------
      * MARKS
-     * -----------------------------------------------------
-     *
-     * IMPORTANT:
-     *
-     * Current Mark model only contains:
-     *
-     * score
-     * studentId
-     * subjectId
-     * teacherId
-     * termId
-     * sequenceId
-     *
-     * Therefore we only query those fields.
      */
-
     prisma.mark.findMany({
       where: {
         termId: term.id,
@@ -492,11 +467,8 @@ export async function buildTermReportCards(
     }),
 
     /**
-     * -----------------------------------------------------
      * SUBJECTS
-     * -----------------------------------------------------
      */
-
     prisma.subject.findMany({
       select: {
         id: true,
@@ -511,11 +483,10 @@ export async function buildTermReportCards(
     }),
 
     /**
-     * -----------------------------------------------------
      * ATTENDANCE
-     * -----------------------------------------------------
+     *
+     * LATE has been completely removed.
      */
-
     prisma.attendance.groupBy({
       by: [
         "studentId",
@@ -538,11 +509,8 @@ export async function buildTermReportCards(
     }),
 
     /**
-     * -----------------------------------------------------
      * EXISTING REPORT CARDS
-     * -----------------------------------------------------
      */
-
     prisma.reportCard.findMany({
       where: {
         termId,
@@ -564,11 +532,8 @@ export async function buildTermReportCards(
     }),
 
     /**
-     * -----------------------------------------------------
      * PUBLICATION STATUS
-     * -----------------------------------------------------
      */
-
     prisma.resultPublication.findMany({
       where: {
         termId,
@@ -584,62 +549,6 @@ export async function buildTermReportCards(
       },
     }),
   ]);
-
-  /**
-   * -------------------------------------------------------
-   * DEBUG INFORMATION
-   * -------------------------------------------------------
-   *
-   * Keep this temporarily while testing the Preview button.
-   */
-
-  console.log(
-    "========== REPORT CARD DEBUG =========="
-  );
-
-  console.log(
-    "TERM:",
-    term.id,
-    term.name
-  );
-
-  console.log(
-    "SEQUENCES:",
-    sequenceIds
-  );
-
-  console.log(
-    "CLASSROOM IDS:",
-    classroomIds
-  );
-
-  console.log(
-    "STUDENT IDS:",
-    studentIds
-  );
-
-  console.log(
-    "MARKS FOUND:",
-    marks.length
-  );
-
-  console.log(
-    "MARK SAMPLE:",
-    marks.slice(0, 10).map(
-      (mark) => ({
-        studentId: mark.studentId,
-        subjectId: mark.subjectId,
-        teacherId: mark.teacherId,
-        termId: mark.termId,
-        sequenceId: mark.sequenceId,
-        score: mark.score,
-      })
-    )
-  );
-
-  console.log(
-    "======================================="
-  );
 
   /**
    * -------------------------------------------------------
@@ -677,6 +586,7 @@ export async function buildTermReportCards(
   /**
    * -------------------------------------------------------
    * MARKS INDEX
+   * -------------------------------------------------------
    *
    * student
    *   ↓
@@ -701,7 +611,6 @@ export async function buildTermReportCards(
 
     if (!perSubject) {
       perSubject = new Map();
-
       marksByStudent.set(
         mark.studentId,
         perSubject
@@ -754,14 +663,6 @@ export async function buildTermReportCards(
       entry[status] += row._count._all;
     }
 
-    if (row.status === "LATE") {
-      entry.LATE +=
-        row._count._all;
-
-      entry.lateHours +=
-        row._count._all;
-    }
-
     attendanceByStudent.set(
       row.studentId,
       entry
@@ -778,9 +679,7 @@ export async function buildTermReportCards(
 
   for (const classroom of classrooms) {
     /**
-     * -----------------------------------------------------
      * SUBJECT ASSIGNMENTS FOR THIS CLASS
-     * -----------------------------------------------------
      */
 
     const assignmentSubjects =
@@ -816,9 +715,7 @@ export async function buildTermReportCards(
     }
 
     /**
-     * -----------------------------------------------------
      * STUDENTS USED FOR CLASS RANKING
-     * -----------------------------------------------------
      */
 
     const ranked: {
@@ -829,9 +726,7 @@ export async function buildTermReportCards(
     const built: ReportCardData[] = [];
 
     /**
-     * -----------------------------------------------------
      * EACH STUDENT
-     * -----------------------------------------------------
      */
 
     for (const student of classroom.students) {
@@ -845,12 +740,9 @@ export async function buildTermReportCards(
         >();
 
       /**
-       * ---------------------------------------------------
        * SUBJECT IDS
-       * ---------------------------------------------------
        *
        * Include:
-       *
        * 1. Subjects assigned to the classroom
        * 2. Subjects for which this student has marks
        */
@@ -864,9 +756,7 @@ export async function buildTermReportCards(
       const lines: SubjectLine[] = [];
 
       /**
-       * ---------------------------------------------------
        * EACH SUBJECT
-       * ---------------------------------------------------
        */
 
       for (const subjectId of subjectIds) {
@@ -886,8 +776,7 @@ export async function buildTermReportCards(
 
             return {
               subject,
-              teacher:
-                null as string | null,
+              teacher: null as string | null,
             };
           })();
 
@@ -902,9 +791,7 @@ export async function buildTermReportCards(
           new Map<string, MarkRow>();
 
         /**
-         * -------------------------------------------------
          * BUILD SEQUENCE MARKS
-         * -------------------------------------------------
          */
 
         const sequenceMarks: SequenceMark[] =
@@ -930,12 +817,6 @@ export async function buildTermReportCards(
 
                 score,
 
-                /**
-                 * PDF compatibility.
-                 *
-                 * Current schema:
-                 * average === score
-                 */
                 average: score,
 
                 grade:
@@ -952,9 +833,7 @@ export async function buildTermReportCards(
           );
 
         /**
-         * -------------------------------------------------
          * AVAILABLE SCORES
-         * -------------------------------------------------
          */
 
         const recorded =
@@ -964,9 +843,7 @@ export async function buildTermReportCards(
           );
 
         /**
-         * -------------------------------------------------
          * SUBJECT AVERAGE
-         * -------------------------------------------------
          */
 
         const average =
@@ -983,9 +860,7 @@ export async function buildTermReportCards(
             : null;
 
         /**
-         * -------------------------------------------------
          * TEACHER
-         * -------------------------------------------------
          */
 
         const teacherName =
@@ -999,9 +874,7 @@ export async function buildTermReportCards(
           null;
 
         /**
-         * -------------------------------------------------
          * SUBJECT LINE
-         * -------------------------------------------------
          */
 
         const coefficient =
@@ -1071,14 +944,11 @@ export async function buildTermReportCards(
         );
 
       /**
-       * ---------------------------------------------------
        * TERM WEIGHTED AVERAGE
-       * ---------------------------------------------------
        *
        * Σ(subject average × coefficient)
        * ---------------------------------
        * Σ(coefficients)
-       * ---------------------------------------------------
        */
 
       const coefficients =
@@ -1110,15 +980,7 @@ export async function buildTermReportCards(
           : null;
 
       /**
-       * ---------------------------------------------------
        * MARK COMPLETION
-       * ---------------------------------------------------
-       *
-       * A mark is recorded when:
-       *
-       * - it belongs to this student
-       * - it belongs to this term
-       * - it belongs to one of this term's sequences
        */
 
       const studentMarks =
@@ -1161,9 +1023,7 @@ export async function buildTermReportCards(
         ) ?? null;
 
       /**
-       * ---------------------------------------------------
        * BUILD REPORT CARD
-       * ---------------------------------------------------
        */
 
       const card: ReportCardData = {
@@ -1470,12 +1330,10 @@ function emptyAttendance(): AttendanceSummary {
   return {
     PRESENT: 0,
     ABSENT: 0,
-    LATE: 0,
     EXCUSED: 0,
     total: 0,
     rate: null,
     absentHours: 0,
-    lateHours: 0,
   };
 }
 
@@ -1489,7 +1347,6 @@ export function finaliseAttendance(
   const total =
     summary.PRESENT +
     summary.ABSENT +
-    summary.LATE +
     summary.EXCUSED;
 
   return {
@@ -1512,4 +1369,3 @@ export function finaliseAttendance(
 }
 
 export { isInactive };
-

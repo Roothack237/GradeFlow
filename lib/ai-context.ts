@@ -1,27 +1,76 @@
 import prisma from "@/lib/prisma";
+
 import { PASS_MARK } from "@/lib/grading";
+
 import { buildTeacherAnalytics } from "@/lib/teacher-analytics";
 
 /**
  * Builds the school context that is sent to the AI provider.
  *
  * The full database is never sent: only aggregate figures and short lists are
- * produced on the server, so an administrator cannot leak row level data by
- * prompting the assistant.
+ * produced on the server.
  */
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * Parses "HH:MM" into minutes since midnight.
+ */
+function toMinutes(time: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+
+  if (!match) return null;
+
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/**
+ * Duration in hours between two "HH:MM" strings.
+ */
+function lessonHours(start: string, end: string): number {
+  const a = toMinutes(start);
+  const b = toMinutes(end);
+
+  if (a === null || b === null || b <= a) return 1;
+
+  return Math.max(1, (b - a) / 60);
+}
+
+/* =========================================================
+   SCHOOL CONTEXT
+========================================================= */
+
 export async function buildSchoolContext() {
   const [year, term] = await Promise.all([
     prisma.academicYear.findFirst({
       where: { isActive: true },
-      select: { id: true, name: true, startDate: true, endDate: true },
+      select: {
+        id: true,
+        name: true,
+        startDate: true,
+        endDate: true,
+      },
     }),
+
     prisma.term.findFirst({
       where: { isCurrent: true },
       select: {
         id: true,
         name: true,
-        academicYear: { select: { name: true } },
-        sequences: { select: { name: true, order: true } },
+        academicYear: {
+          select: {
+            name: true,
+          },
+        },
+        sequences: {
+          select: {
+            name: true,
+            order: true,
+          },
+          orderBy: {
+            order: "asc",
+          },
+        },
       },
     }),
   ]);
@@ -30,81 +79,134 @@ export async function buildSchoolContext() {
     students,
     teachers,
     parents,
-    classes,
+    classrooms,
     subjects,
     marks,
     attendance,
     publications,
   ] = await Promise.all([
     prisma.student.count(),
+
     prisma.teacher.count(),
+
     prisma.parent.count(),
+
     prisma.classroom.findMany({
       select: {
         name: true,
-        section: { select: { name: true } },
-        _count: { select: { students: true } },
+        section: {
+          select: {
+            name: true,
+          },
+        },
+        _count: {
+          select: {
+            students: true,
+          },
+        },
       },
-      orderBy: { name: "asc" },
+      orderBy: {
+        name: "asc",
+      },
     }),
+
     prisma.subject.findMany({
-      select: { name: true, coefficient: true },
-      orderBy: { name: "asc" },
+      select: {
+        name: true,
+        coefficient: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
     }),
+
     term
       ? prisma.mark.findMany({
-          where: { sequence: { termId: term.id } },
+          where: {
+            sequence: {
+              termId: term.id,
+            },
+          },
           select: {
-            average: true,
-            subject: { select: { name: true, coefficient: true } },
-            student: { select: { classroomId: true } },
+            score: true,
+            subject: {
+              select: {
+                name: true,
+                coefficient: true,
+              },
+            },
+            student: {
+              select: {
+                classroomId: true,
+              },
+            },
           },
         })
       : Promise.resolve([]),
+
     term
       ? prisma.attendance.groupBy({
           by: ["status"],
-          where: { sequence: { termId: term.id } },
-          _count: { _all: true },
+          where: {
+            sequence: {
+              termId: term.id,
+            },
+          },
+          _count: {
+            _all: true,
+          },
         })
       : Promise.resolve([]),
-    prisma.resultPublication.count({ where: { status: "PUBLISHED" } }),
+
+    prisma.resultPublication.count({
+      where: {
+        status: "PUBLISHED",
+      },
+    }),
   ]);
 
-  /* ---- performance aggregates ---- */
+  /* ---------------------------------------------------------
+     PERFORMANCE AGGREGATES
+  --------------------------------------------------------- */
 
-  const subjectStats = new Map<string, { total: number; count: number }>();
-  const classStats = new Map<string, { total: number; count: number }>();
+  const subjectStats = new Map<
+    string,
+    {
+      total: number;
+      count: number;
+    }
+  >();
+
   let markTotal = 0;
   let markCount = 0;
   let passed = 0;
 
   for (const mark of marks) {
+    const score = Number(mark.score);
+
+    if (!Number.isFinite(score)) continue;
+
     const subject = subjectStats.get(mark.subject.name) ?? {
       total: 0,
       count: 0,
     };
 
-    subject.total += mark.average;
+    subject.total += score;
     subject.count += 1;
 
     subjectStats.set(mark.subject.name, subject);
 
-    const classId = mark.student.classroomId;
-
-    if (classId) {
-      const entry = classStats.get(classId) ?? { total: 0, count: 0 };
-
-      entry.total += mark.average;
-      entry.count += 1;
-
-      classStats.set(classId, entry);
-    }
-
-    markTotal += mark.average;
+    markTotal += score;
     markCount += 1;
-    if (mark.average >= PASS_MARK) passed += 1;
+
+    if (score >= PASS_MARK) {
+      passed += 1;
+    }
   }
+
+  /* ---------------------------------------------------------
+     ATTENDANCE
+  --------------------------------------------------------- */
 
   const attendanceCounts: Record<string, number> = {
     PRESENT: 0,
@@ -113,127 +215,152 @@ export async function buildSchoolContext() {
     EXCUSED: 0,
   };
 
-  for (const row of attendance) attendanceCounts[row.status] = row._count._all;
+  for (const row of attendance) {
+    attendanceCounts[row.status] =
+      (attendanceCounts[row.status] ?? 0) + row._count._all;
+  }
 
   const attendanceTotal = Object.values(attendanceCounts).reduce(
     (sum, value) => sum + value,
     0
   );
 
-  const round = (value: number) => Math.round(value * 100) / 100;
-
   return {
     generatedAt: new Date().toISOString(),
 
     school: {
       academicYear: year?.name ?? null,
-      term: term ? `${term.name} (${term.academicYear.name})` : null,
-      sequences: term?.sequences.map((sequence) => sequence.name) ?? [],
+
+      term: term
+        ? `${term.name} (${term.academicYear.name})`
+        : null,
+
+      sequences:
+        term?.sequences.map((sequence) => sequence.name) ?? [],
+
       counts: {
         students,
         teachers,
         parents,
-        classes: classes.length,
+        classes: classrooms.length,
         subjects: subjects.length,
       },
+
       publishedResultSets: publications,
     },
 
-    classes: classes.map((classroom) => ({
+    classes: classrooms.map((classroom) => ({
       name: classroom.name,
       section: classroom.section?.name ?? null,
       students: classroom._count.students,
     })),
 
-    subjects: subjects.map((subject) => ({
-      name: subject.name,
-      coefficient: subject.coefficient,
-      average:
-        subjectStats.get(subject.name)?.count
-          ? round(
-              (subjectStats.get(subject.name)!.total /
-                subjectStats.get(subject.name)!.count) *
-                1
-            )
-          : null,
-      marks: subjectStats.get(subject.name)?.count ?? 0,
-    })),
+    subjects: subjects.map((subject) => {
+      const stats = subjectStats.get(subject.name);
+
+      return {
+        name: subject.name,
+        coefficient: subject.coefficient,
+
+        average:
+          stats && stats.count > 0
+            ? round2(stats.total / stats.count)
+            : null,
+
+        marks: stats?.count ?? 0,
+      };
+    }),
 
     performance: {
       marksRecorded: markCount,
-      average: markCount ? round(markTotal / markCount) : null,
-      passRate: markCount ? round((passed / markCount) * 100) : null,
+
+      average:
+        markCount > 0
+          ? round2(markTotal / markCount)
+          : null,
+
+      passRate:
+        markCount > 0
+          ? round2((passed / markCount) * 100)
+          : null,
     },
 
     attendance: {
       records: attendanceTotal,
-      ...attendanceCounts,
-      rate: attendanceTotal
-        ? round(
-            ((attendanceCounts.PRESENT + attendanceCounts.LATE) /
-              attendanceTotal) *
-              100
-          )
-        : null,
+
+      present: attendanceCounts.PRESENT ?? 0,
+      absent: attendanceCounts.ABSENT ?? 0,
+      late: attendanceCounts.LATE ?? 0,
+      excused: attendanceCounts.EXCUSED ?? 0,
+
+      rate:
+        attendanceTotal > 0
+          ? round2(
+              (((attendanceCounts.PRESENT ?? 0) +
+                (attendanceCounts.LATE ?? 0)) /
+                attendanceTotal) *
+                100
+            )
+          : null,
     },
   };
 }
 
-export type SchoolContext = Awaited<ReturnType<typeof buildSchoolContext>>;
+export type SchoolContext = Awaited<
+  ReturnType<typeof buildSchoolContext>
+>;
 
-/** Renders the context as compact text for the model prompt. */
+/**
+ * Renders school context as compact text for the AI model.
+ */
 export function renderSchoolContext(context: SchoolContext): string {
   return renderContext(context);
 }
 
-/** Renders any context object as compact JSON for the model prompt. */
+/**
+ * Renders any context object as compact JSON.
+ */
 export function renderContext(context: unknown): string {
   return JSON.stringify(context, null, 2);
-}
-
-const round2 = (value: number) => Math.round(value * 100) / 100;
-
-/** Parses "HH:MM" into minutes since midnight. */
-function toMinutes(time: string): number | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
-
-/** Duration in hours between two "HH:MM" strings (minimum 1 hour). */
-function lessonHours(start: string, end: string): number {
-  const a = toMinutes(start);
-  const b = toMinutes(end);
-  if (a === null || b === null || b <= a) return 1;
-  return Math.max(1, (b - a) / 60);
 }
 
 /* =========================================================
    TEACHER AI CONTEXT
 ========================================================= */
 
-/**
- * Everything the teacher AI assistant is allowed to see: the teacher's
- * assignments and, for each assigned class, real marks, attendance and
- * performance trends aggregated from the database.
- */
 export async function buildTeacherAiContext(teacherId: string) {
   const analytics = await buildTeacherAnalytics(teacherId);
 
-  if (!analytics) return { error: "Teacher not found." };
+  if (!analytics) {
+    return {
+      error: "Teacher not found.",
+    };
+  }
 
   return {
     generatedAt: analytics.generatedAt,
-    teacher: { name: analytics.teacher.name },
+
+    teacher: {
+      name: analytics.teacher.name,
+    },
+
     academicYear: analytics.academicYear?.name ?? null,
+
     assignedSubjects: Array.from(
-      new Set(analytics.assignments.map((assignment) => assignment.subject))
+      new Set(
+        analytics.assignments.map(
+          (assignment) => assignment.subject
+        )
+      )
     ).map((subject) => ({
       name: subject,
+
       coefficient:
-        analytics.assignments.find((assignment) => assignment.subject === subject)
-          ?.coefficient ?? null,
+        analytics.assignments.find(
+          (assignment) => assignment.subject === subject
+        )?.coefficient ?? null,
     })),
+
     classes: analytics.classes.map((klass) => {
       const subjects = analytics.subjectAverages.filter(
         (subject) => subject.class === klass.name
@@ -245,14 +372,17 @@ export async function buildTeacherAiContext(teacherId: string) {
         students: klass.students,
         classAverage: klass.average,
         passRate: klass.passRate,
+
         subjectAverages: subjects.map((subject) => ({
           subject: subject.subject,
           average: subject.average,
           marks: subject.marks,
         })),
+
         performanceBySequence: subjects.length
           ? subjects[0].bySequence
           : [],
+
         attendance: {
           records: analytics.overview.attendance.records,
           present: analytics.overview.attendance.present,
@@ -263,12 +393,18 @@ export async function buildTeacherAiContext(teacherId: string) {
         },
       };
     }),
+
     bestStudents: analytics.bestStudents,
+
     weakStudents: analytics.atRiskStudents
       .filter((student) => student.average !== null)
       .slice(0, 5),
+
     attendanceProblems: analytics.atRiskStudents
-      .filter((student) => student.hoursAbsent + student.hoursLate >= 3)
+      .filter(
+        (student) =>
+          student.hoursAbsent + student.hoursLate >= 3
+      )
       .slice(0, 8)
       .map((student) => ({
         name: student.name,
@@ -276,98 +412,176 @@ export async function buildTeacherAiContext(teacherId: string) {
         hoursAbsent: student.hoursAbsent,
         hoursLate: student.hoursLate,
       })),
+
     markTrends: analytics.trends.marks,
+
     attendanceTrends: analytics.trends.attendance,
-    note: "Each attendance record represents one lesson hour. The pass mark is 10/20 (marks are recorded on the 20-point scale). Subject scope of this teacher is limited to the assignments listed above; class figures cover every subject of the class.",
+
+    note:
+      "Each attendance record represents one lesson hour. " +
+      "The pass mark is 10/20. Marks are recorded on the 20-point scale. " +
+      "Teacher scope is limited to assigned classes and subjects.",
   };
 }
 
-export type TeacherAiContext = Awaited<ReturnType<typeof buildTeacherAiContext>>;
+export type TeacherAiContext = Awaited<
+  ReturnType<typeof buildTeacherAiContext>
+>;
 
 /* =========================================================
    PARENT AI CONTEXT
 ========================================================= */
 
-/**
- * Everything the parent AI assistant is allowed to see: only the children
- * linked to this parent, with their real marks, attendance and report cards.
- */
 export async function buildParentAiContext(parentId: string) {
   const parent = await prisma.parent.findUnique({
-    where: { id: parentId },
+    where: {
+      id: parentId,
+    },
+
     select: {
       fullName: true,
+
       children: {
-        where: { status: { not: "SUSPENDED" } },
+        where: {
+          status: {
+            not: "SUSPENDED",
+          },
+        },
+
         select: {
           id: true,
           firstName: true,
           lastName: true,
           matricule: true,
+
           classroom: {
-            select: { name: true, section: { select: { name: true } } },
-          },
-          marks: {
             select: {
-              ca1: true,
-              ca2: true,
-              exam: true,
-              average: true,
-              grade: true,
-              remark: true,
-              subject: { select: { name: true, coefficient: true } },
-              sequence: {
+              name: true,
+
+              section: {
                 select: {
                   name: true,
-                  order: true,
-                  term: { select: { name: true, academicYear: { select: { name: true } } } },
                 },
               },
             },
           },
+
+          marks: {
+            select: {
+              score: true,
+
+              subject: {
+                select: {
+                  name: true,
+                  coefficient: true,
+                },
+              },
+
+              sequence: {
+                select: {
+                  name: true,
+                  order: true,
+
+                  term: {
+                    select: {
+                      name: true,
+
+                      academicYear: {
+                        select: {
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+
           attendances: {
             select: {
               status: true,
               date: true,
-              subject: { select: { name: true } },
+
+              subject: {
+                select: {
+                  name: true,
+                },
+              },
             },
-            orderBy: { date: "desc" },
+
+            orderBy: {
+              date: "desc",
+            },
           },
+
           reportCards: {
             select: {
               average: true,
-              rank: true,
+              position: true,
               decision: true,
               principalRemark: true,
+              generatedAt: true,
+
               term: {
-                select: { name: true, academicYear: { select: { name: true } } },
+                select: {
+                  name: true,
+
+                  academicYear: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
               },
             },
-            orderBy: { createdAt: "desc" },
+
+            orderBy: {
+              generatedAt: "desc",
+            },
           },
         },
-        orderBy: { lastName: "asc" },
+
+        orderBy: {
+          lastName: "asc",
+        },
       },
     },
   });
 
-  if (!parent) return { error: "Parent not found." };
+  if (!parent) {
+    return {
+      error: "Parent not found.",
+    };
+  }
 
   const children = parent.children.map((child) => {
-    /* marks grouped by subject then by sequence */
     const bySubject = new Map<
       string,
       {
         coefficient: number;
-        sequences: { sequence: string; average: number }[];
+        sequences: {
+          sequence: string;
+          score: number;
+        }[];
         total: number;
         count: number;
       }
     >();
 
-    const bySequence = new Map<string, { total: number; count: number }>();
+    const bySequence = new Map<
+      string,
+      {
+        total: number;
+        count: number;
+      }
+    >();
 
     for (const mark of child.marks) {
+      const score = Number(mark.score);
+
+      if (!Number.isFinite(score)) continue;
+
       const entry = bySubject.get(mark.subject.name) ?? {
         coefficient: mark.subject.coefficient,
         sequences: [],
@@ -377,77 +591,139 @@ export async function buildParentAiContext(parentId: string) {
 
       entry.sequences.push({
         sequence: `${mark.sequence.term.name} · ${mark.sequence.name}`,
-        average: mark.average,
+        score,
       });
-      entry.total += mark.average;
+
+      entry.total += score;
       entry.count += 1;
+
       bySubject.set(mark.subject.name, entry);
 
-      const sequenceKey = `${mark.sequence.term.name} · ${mark.sequence.name}`;
-      const sequence = bySequence.get(sequenceKey) ?? { total: 0, count: 0 };
-      sequence.total += mark.average;
+      const sequenceKey =
+        `${mark.sequence.term.name} · ${mark.sequence.name}`;
+
+      const sequence = bySequence.get(sequenceKey) ?? {
+        total: 0,
+        count: 0,
+      };
+
+      sequence.total += score;
       sequence.count += 1;
+
       bySequence.set(sequenceKey, sequence);
     }
 
-    const attendanceCounts = { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 };
-    for (const record of child.attendances) attendanceCounts[record.status] += 1;
+    const attendanceCounts = {
+      PRESENT: 0,
+      ABSENT: 0,
+      LATE: 0,
+      EXCUSED: 0,
+    };
 
-    const attendanceTotal = Object.values(attendanceCounts).reduce(
-      (sum, value) => sum + value,
-      0
-    );
+    for (const record of child.attendances) {
+      attendanceCounts[record.status] =
+        (attendanceCounts[record.status] ?? 0) + 1;
+    }
+
+    const attendanceTotal = Object.values(
+      attendanceCounts
+    ).reduce((sum, value) => sum + value, 0);
 
     const overall =
       child.marks.length > 0
         ? round2(
-            child.marks.reduce((total, mark) => total + mark.average, 0) / child.marks.length
+            child.marks.reduce(
+              (total, mark) => total + Number(mark.score),
+              0
+            ) / child.marks.length
           )
         : null;
 
     return {
       name: `${child.firstName} ${child.lastName}`,
+
       matricule: child.matricule,
+
       class: child.classroom?.name ?? null,
-      section: child.classroom?.section.name ?? null,
+
+      section: child.classroom?.section?.name ?? null,
+
       overallAverage: overall,
+
       subjects: Array.from(bySubject.entries())
         .map(([subject, value]) => ({
           subject,
           coefficient: value.coefficient,
-          average: round2(value.total / value.count),
+
+          average:
+            value.count > 0
+              ? round2(value.total / value.count)
+              : null,
+
           bySequence: value.sequences,
         }))
-        .sort((a, b) => a.subject.localeCompare(b.subject)),
-      performanceBySequence: Array.from(bySequence.entries())
+        .sort((a, b) =>
+          a.subject.localeCompare(b.subject)
+        ),
+
+      performanceBySequence: Array.from(
+        bySequence.entries()
+      )
         .map(([sequence, value]) => ({
           sequence,
-          average: round2(value.total / value.count),
+
+          average:
+            value.count > 0
+              ? round2(value.total / value.count)
+              : null,
         }))
-        .sort((a, b) => a.sequence.localeCompare(b.sequence)),
+        .sort((a, b) =>
+          a.sequence.localeCompare(b.sequence)
+        ),
+
       reportCards: child.reportCards.map((card) => ({
-        term: `${card.term.academicYear.name} · ${card.term.name}`,
+        term:
+          `${card.term.academicYear.name} · ${card.term.name}`,
+
         average: card.average,
-        rank: card.rank,
+
+        position: card.position,
+
         decision: card.decision,
+
         principalRemark: card.principalRemark,
       })),
+
       attendance: {
         hoursPresent: attendanceCounts.PRESENT,
         hoursAbsent: attendanceCounts.ABSENT,
         hoursLate: attendanceCounts.LATE,
         hoursExcused: attendanceCounts.EXCUSED,
-        rate: attendanceTotal
-          ? round2(
-              ((attendanceCounts.PRESENT + attendanceCounts.LATE) / attendanceTotal) * 100
-            )
-          : null,
+
+        rate:
+          attendanceTotal > 0
+            ? round2(
+                ((attendanceCounts.PRESENT +
+                  attendanceCounts.LATE) /
+                  attendanceTotal) *
+                  100
+              )
+            : null,
+
         recentIssues: child.attendances
-          .filter((record) => record.status === "ABSENT" || record.status === "LATE")
+          .filter(
+            (record) =>
+              record.status === "ABSENT" ||
+              record.status === "LATE"
+          )
           .slice(0, 8)
           .map((record) => ({
-            date: record.date.toISOString().slice(0, 10),
+            date: record.date
+              .toISOString()
+              .slice(0, 10),
+
             status: record.status,
+
             subject: record.subject.name,
           })),
       },
@@ -456,22 +732,41 @@ export async function buildParentAiContext(parentId: string) {
 
   return {
     generatedAt: new Date().toISOString(),
-    parent: { name: parent.fullName },
+
+    parent: {
+      name: parent.fullName,
+    },
+
     children,
-    note: "Each attendance record represents one lesson hour. The pass mark is 10/20 (marks are recorded on the 20-point scale). Averages are computed over recorded marks only.",
+
+    note:
+      "Each attendance record represents one lesson hour. " +
+      "The pass mark is 10/20. Marks are recorded on the 20-point scale. " +
+      "Averages are computed over recorded sequence marks only.",
   };
 }
 
-export type ParentAiContext = Awaited<ReturnType<typeof buildParentAiContext>>;
+export type ParentAiContext = Awaited<
+  ReturnType<typeof buildParentAiContext>
+>;
 
 /* =========================================================
-   ADMIN AI CONTEXT (extended school context)
+   ADMIN AI CONTEXT
 ========================================================= */
 
 /**
- * School-wide context for the admin AI assistant: the aggregate school
- * figures plus class/section/year comparisons, attendance issues and
- * teacher workload — all computed from the database.
+ * School-wide context for the admin AI assistant.
+ *
+ * Uses the current GradeFlow Mark model:
+ *
+ * Mark {
+ *   studentId
+ *   subjectId
+ *   teacherId
+ *   termId
+ *   sequenceId
+ *   score
+ * }
  */
 export async function buildAdminAiContext() {
   const base = await buildSchoolContext();
@@ -487,54 +782,139 @@ export async function buildAdminAiContext() {
       select: {
         id: true,
         name: true,
-        section: { select: { name: true } },
-        academicYear: { select: { name: true } },
-        _count: { select: { students: true } },
+
+        section: {
+          select: {
+            name: true,
+          },
+        },
+
+        academicYear: {
+          select: {
+            name: true,
+          },
+        },
+
+        _count: {
+          select: {
+            students: true,
+          },
+        },
       },
-      orderBy: { name: "asc" },
+
+      orderBy: {
+        name: "asc",
+      },
     }),
+
     prisma.mark.findMany({
       select: {
-        average: true,
-        student: { select: { classroomId: true } },
+        score: true,
+
+        student: {
+          select: {
+            classroomId: true,
+          },
+        },
+
         sequence: {
           select: {
             name: true,
-            term: { select: { name: true, academicYear: { select: { name: true } } } },
+
+            term: {
+              select: {
+                name: true,
+
+                academicYear: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
     }),
+
     prisma.attendance.findMany({
       select: {
         status: true,
-        student: { select: { classroomId: true } },
+
+        student: {
+          select: {
+            classroomId: true,
+          },
+        },
       },
     }),
+
     prisma.teacher.findMany({
       select: {
         id: true,
         fullName: true,
-        _count: { select: { assignments: true, attendances: true, marks: true } },
-        assignments: {
+
+        _count: {
           select: {
-            classroom: { select: { name: true } },
-            subject: { select: { name: true } },
+            assignments: true,
+            attendances: true,
+            marks: true,
           },
         },
-        timetable: { select: { startTime: true, endTime: true } },
+
+        assignments: {
+          select: {
+            classroom: {
+              select: {
+                name: true,
+              },
+            },
+
+            subject: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+
+        timetable: {
+          select: {
+            startTime: true,
+            endTime: true,
+          },
+        },
       },
-      orderBy: { fullName: "asc" },
+
+      orderBy: {
+        fullName: "asc",
+      },
     }),
+
     prisma.attendance.groupBy({
       by: ["studentId"],
-      where: { status: "ABSENT" },
-      _count: { _all: true },
-      orderBy: { _count: { studentId: "asc" } },
+
+      where: {
+        status: "ABSENT",
+      },
+
+      _count: {
+        _all: true,
+      },
+
+      orderBy: {
+        _count: {
+          studentId: "desc",
+        },
+      },
+
+      take: 10,
     }),
   ]);
 
-  /* ---- class comparisons ---- */
+  /* ---------------------------------------------------------
+     CLASS COMPARISONS
+  --------------------------------------------------------- */
 
   const classStats = new Map<
     string,
@@ -543,9 +923,11 @@ export async function buildAdminAiContext() {
       section: string;
       year: string;
       students: number;
+
       markTotal: number;
       markCount: number;
       passed: number;
+
       present: number;
       absent: number;
       late: number;
@@ -556,12 +938,14 @@ export async function buildAdminAiContext() {
   for (const classroom of classrooms) {
     classStats.set(classroom.id, {
       name: classroom.name,
-      section: classroom.section.name,
+      section: classroom.section?.name ?? "Unknown",
       year: classroom.academicYear.name,
       students: classroom._count.students,
+
       markTotal: 0,
       markCount: 0,
       passed: 0,
+
       present: 0,
       absent: 0,
       late: 0,
@@ -570,159 +954,340 @@ export async function buildAdminAiContext() {
   }
 
   for (const mark of marks) {
-    const bucket = mark.student.classroomId ? classStats.get(mark.student.classroomId) : null;
+    const classroomId = mark.student.classroomId;
+
+    if (!classroomId) continue;
+
+    const bucket = classStats.get(classroomId);
+
     if (!bucket) continue;
-    bucket.markTotal += mark.average;
+
+    const score = Number(mark.score);
+
+    if (!Number.isFinite(score)) continue;
+
+    bucket.markTotal += score;
     bucket.markCount += 1;
-    if (mark.average >= PASS_MARK) bucket.passed += 1;
+
+    if (score >= PASS_MARK) {
+      bucket.passed += 1;
+    }
   }
 
   for (const record of attendances) {
-    const bucket = record.student.classroomId ? classStats.get(record.student.classroomId) : null;
+    const classroomId = record.student.classroomId;
+
+    if (!classroomId) continue;
+
+    const bucket = classStats.get(classroomId);
+
     if (!bucket) continue;
-    if (record.status === "PRESENT") bucket.present += 1;
-    else if (record.status === "ABSENT") bucket.absent += 1;
-    else if (record.status === "LATE") bucket.late += 1;
-    else bucket.excused += 1;
+
+    if (record.status === "PRESENT") {
+      bucket.present += 1;
+    } else if (record.status === "ABSENT") {
+      bucket.absent += 1;
+    } else if (record.status === "LATE") {
+      bucket.late += 1;
+    } else if (record.status === "EXCUSED") {
+      bucket.excused += 1;
+    }
   }
 
-  const classComparisons = Array.from(classStats.values())
+  const classComparisons = Array.from(
+    classStats.values()
+  )
     .map((bucket) => {
       const attendanceTotal =
-        bucket.present + bucket.absent + bucket.late + bucket.excused;
+        bucket.present +
+        bucket.absent +
+        bucket.late +
+        bucket.excused;
 
       return {
         class: bucket.name,
+
         section: bucket.section,
+
         academicYear: bucket.year,
+
         students: bucket.students,
-        average: bucket.markCount ? round2(bucket.markTotal / bucket.markCount) : null,
-        passRate: bucket.markCount
-          ? round2((bucket.passed / bucket.markCount) * 100)
-          : null,
-        attendanceRate: attendanceTotal
-          ? round2(((bucket.present + bucket.late) / attendanceTotal) * 100)
-          : null,
+
+        average:
+          bucket.markCount > 0
+            ? round2(
+                bucket.markTotal /
+                  bucket.markCount
+              )
+            : null,
+
+        passRate:
+          bucket.markCount > 0
+            ? round2(
+                (bucket.passed /
+                  bucket.markCount) *
+                  100
+              )
+            : null,
+
+        attendanceRate:
+          attendanceTotal > 0
+            ? round2(
+                ((bucket.present +
+                  bucket.late) /
+                  attendanceTotal) *
+                  100
+              )
+            : null,
       };
     })
-    .filter((entry) => entry.students > 0 || entry.average !== null);
+    .filter(
+      (entry) =>
+        entry.students > 0 ||
+        entry.average !== null
+    );
 
-  /* ---- section comparisons ---- */
+  /* ---------------------------------------------------------
+     SECTION COMPARISONS
+  --------------------------------------------------------- */
 
   const sectionMap = new Map<
     string,
-    { classes: number; students: number; total: number; count: number; passed: number }
+    {
+      classes: number;
+      students: number;
+      total: number;
+      count: number;
+    }
   >();
 
   for (const entry of classComparisons) {
-    if (!sectionMap.has(entry.section)) {
-      sectionMap.set(entry.section, {
+    const section =
+      sectionMap.get(entry.section) ?? {
         classes: 0,
         students: 0,
         total: 0,
         count: 0,
-        passed: 0,
-      });
-    }
+      };
 
-    const section = sectionMap.get(entry.section)!;
     section.classes += 1;
     section.students += entry.students;
+
     if (entry.average !== null) {
       section.total += entry.average;
       section.count += 1;
     }
+
+    sectionMap.set(entry.section, section);
   }
 
-  const sectionComparisons = Array.from(sectionMap.entries()).map(([section, value]) => ({
+  const sectionComparisons = Array.from(
+    sectionMap.entries()
+  ).map(([section, value]) => ({
     section,
+
     classes: value.classes,
+
     students: value.students,
-    averageClassPerformance: value.count ? round2(value.total / value.count) : null,
+
+    averageClassPerformance:
+      value.count > 0
+        ? round2(
+            value.total /
+              value.count
+          )
+        : null,
   }));
 
-  /* ---- academic year comparisons ---- */
+  /* ---------------------------------------------------------
+     ACADEMIC YEAR COMPARISONS
+  --------------------------------------------------------- */
 
-  const yearMap = new Map<string, { total: number; count: number }>();
+  const yearMap = new Map<
+    string,
+    {
+      total: number;
+      count: number;
+    }
+  >();
 
   for (const mark of marks) {
-    const yearName = mark.sequence.term.academicYear.name;
-    const bucket = yearMap.get(yearName) ?? { total: 0, count: 0 };
-    bucket.total += mark.average;
+    const yearName =
+      mark.sequence.term.academicYear.name;
+
+    const score = Number(mark.score);
+
+    if (!Number.isFinite(score)) continue;
+
+    const bucket =
+      yearMap.get(yearName) ?? {
+        total: 0,
+        count: 0,
+      };
+
+    bucket.total += score;
     bucket.count += 1;
+
     yearMap.set(yearName, bucket);
   }
 
-  const yearComparisons = Array.from(yearMap.entries()).map(([year, value]) => ({
-    academicYear: year,
-    average: round2(value.total / value.count),
+  const yearComparisons = Array.from(
+    yearMap.entries()
+  ).map(([academicYear, value]) => ({
+    academicYear,
+
+    average:
+      value.count > 0
+        ? round2(
+            value.total /
+              value.count
+          )
+        : 0,
+
     marks: value.count,
   }));
 
-  /* ---- teacher workload ---- */
+  /* ---------------------------------------------------------
+     TEACHER WORKLOAD
+  --------------------------------------------------------- */
 
   const teacherWorkload = teachers
     .map((teacher) => {
-      const classSet = new Set(teacher.assignments.map((a) => a.classroom.name));
-      const subjectSet = new Set(teacher.assignments.map((a) => a.subject.name));
-      const weeklyHours = teacher.timetable.reduce(
-        (total, entry) => total + lessonHours(entry.startTime, entry.endTime),
-        0
+      const classSet = new Set(
+        teacher.assignments.map(
+          (assignment) =>
+            assignment.classroom.name
+        )
       );
+
+      const subjectSet = new Set(
+        teacher.assignments.map(
+          (assignment) =>
+            assignment.subject.name
+        )
+      );
+
+      const weeklyHours =
+        teacher.timetable.reduce(
+          (total, entry) =>
+            total +
+            lessonHours(
+              entry.startTime,
+              entry.endTime
+            ),
+          0
+        );
 
       return {
         teacher: teacher.fullName,
-        assignments: teacher._count.assignments,
+
+        assignments:
+          teacher._count.assignments,
+
         classes: classSet.size,
+
         subjects: subjectSet.size,
-        timetableHoursPerWeek: round2(weeklyHours),
-        marksRecorded: teacher._count.marks,
-        attendanceRecords: teacher._count.attendances,
+
+        timetableHoursPerWeek:
+          round2(weeklyHours),
+
+        marksRecorded:
+          teacher._count.marks,
+
+        attendanceRecords:
+          teacher._count.attendances,
       };
     })
-    .sort((a, b) => b.assignments - a.assignments)
+    .sort(
+      (a, b) =>
+        b.assignments -
+        a.assignments
+    )
     .slice(0, 40);
 
-  /* ---- attendance issues: most absent students ---- */
+  /* ---------------------------------------------------------
+     ATTENDANCE ISSUES
+  --------------------------------------------------------- */
 
-  const absentStudentIds = absenceByStudent
-    .sort((a, b) => b._count._all - a._count._all)
-    .slice(0, 10)
-    .map((row) => row.studentId);
+  const absentStudentIds =
+    absenceByStudent.map(
+      (row) => row.studentId
+    );
 
-  const absentStudents = absentStudentIds.length
-    ? await prisma.student.findMany({
-        where: { id: { in: absentStudentIds } },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          classroom: { select: { name: true } },
-        },
-      })
-    : [];
+  const absentStudents =
+    absentStudentIds.length
+      ? await prisma.student.findMany({
+          where: {
+            id: {
+              in: absentStudentIds,
+            },
+          },
 
-  const absenceCountById = new Map(
-    absenceByStudent.map((row) => [row.studentId, row._count._all])
-  );
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
 
-  const attendanceIssues = absentStudents
-    .map((student) => ({
-      student: `${student.firstName} ${student.lastName}`,
-      class: student.classroom?.name ?? null,
-      hoursAbsent: absenceCountById.get(student.id) ?? 0,
-    }))
-    .sort((a, b) => b.hoursAbsent - a.hoursAbsent);
+            classroom: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        })
+      : [];
+
+  const absenceCountById =
+    new Map(
+      absenceByStudent.map(
+        (row) => [
+          row.studentId,
+          row._count._all,
+        ]
+      )
+    );
+
+  const attendanceIssues =
+    absentStudents
+      .map((student) => ({
+        student:
+          `${student.firstName} ${student.lastName}`,
+
+        class:
+          student.classroom?.name ??
+          null,
+
+        hoursAbsent:
+          absenceCountById.get(
+            student.id
+          ) ?? 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.hoursAbsent -
+          a.hoursAbsent
+      );
 
   return {
     ...base,
+
     classComparisons,
+
     sectionComparisons,
+
     yearComparisons,
+
     teacherWorkload,
+
     attendanceIssues,
-    note: "Each attendance record represents one lesson hour. The pass mark is 10/20 (marks are recorded on the 20-point scale). Teacher workload combines assignments with published timetable hours per week.",
+
+    note:
+      "Each attendance record represents one lesson hour. " +
+      "The pass mark is 10/20. Marks are recorded on the 20-point scale. " +
+      "Teacher workload combines assignments with timetable hours per week.",
   };
 }
 
-export type AdminAiContext = Awaited<ReturnType<typeof buildAdminAiContext>>;
+export type AdminAiContext = Awaited<
+  ReturnType<typeof buildAdminAiContext>
+>;

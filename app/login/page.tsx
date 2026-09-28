@@ -113,9 +113,13 @@ export default function LoginPage() {
             href="/"
             className="inline-flex items-center gap-3"
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-700 text-white">
-              <GraduationCap size={27} />
-            </div>
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-700 text-white overflow-hidden">
+                <img
+                  src="/images/logo.png"
+                  alt="GradeFlow Logo"
+                  className="h-full w-full object-contain"
+                />
+              </div>
 
             <span className="text-2xl font-bold text-gray-900 dark:text-white">
               GradeFlow

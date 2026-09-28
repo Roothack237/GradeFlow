@@ -1,376 +1,991 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/admin-auth";
-import { logAudit } from "@/lib/audit";
-import { badRequest, serverError, str } from "@/lib/http";
-import { createManyNotifications } from "@/lib/notifications";
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { requireAdmin } from "@/lib/admin-auth";
+import {
+  Prisma,
+  PublicationStatus,
+  AccountStatus,
+} from "@prisma/client";
 
-/**
- * GET /api/admin/publications
- * Publication state of a term for every class, at both levels:
- *   - the term publication        (class x term)
- *   - the sequence publications   (class x sequence)
- *
- * Query: ?termId= &classroomId=
- */
-export async function GET(request: Request) {
-  const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+// ======================================================
+// HELPERS
+// ======================================================
 
+function badRequest(message: string) {
+  return NextResponse.json(
+    {
+      success: false,
+      message,
+    },
+    { status: 400 }
+  );
+}
+
+function serverError(error: unknown) {
+  console.error("[API /admin/publications]", error);
+
+  const message =
+    error instanceof Error ? error.message : "Internal server error.";
+
+  return NextResponse.json(
+    {
+      success: false,
+      message,
+    },
+    { status: 500 }
+  );
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// ======================================================
+// GET PUBLICATIONS
+// ======================================================
+
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
+    const admin = await requireAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Unauthorized.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
 
     let termId = str(searchParams.get("termId"));
     const classroomId = str(searchParams.get("classroomId"));
 
+    // ==================================================
+    // FIND CURRENT TERM
+    // ==================================================
+
     if (!termId) {
-      const current = await prisma.term.findFirst({
-        where: { isCurrent: true },
-        select: { id: true },
+      const currentTerm = await prisma.term.findFirst({
+        where: {
+          isCurrent: true,
+        },
+        select: {
+          id: true,
+        },
       });
 
-      termId = current?.id ?? "";
+      termId = currentTerm?.id ?? "";
     }
 
     if (!termId) {
-      return NextResponse.json({
-        term: null,
-        classes: [],
-        summary: { classes: 0, sequences: 0, published: 0, pending: 0 },
-        message: "No term is available yet.",
-      });
+      return badRequest("No term was found.");
     }
+
+    // ==================================================
+    // LOAD TERM
+    // ==================================================
 
     const term = await prisma.term.findUnique({
-      where: { id: termId },
+      where: {
+        id: termId,
+      },
       select: {
         id: true,
         name: true,
         order: true,
         isCurrent: true,
-        academicYear: { select: { id: true, name: true } },
+
+        academicYear: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+
         sequences: {
-          orderBy: { order: "asc" },
-          select: { id: true, name: true, order: true },
+          orderBy: {
+            order: "asc",
+          },
+          select: {
+            id: true,
+            name: true,
+            order: true,
+          },
         },
       },
     });
 
     if (!term) {
-      return NextResponse.json({ error: "Term not found." }, { status: 404 });
+      return badRequest("Term not found.");
     }
 
+    // ==================================================
+    // LOAD CLASSROOMS
+    // ==================================================
+
     const classrooms = await prisma.classroom.findMany({
-      where: classroomId ? { id: classroomId } : {},
+      where: classroomId
+        ? {
+            id: classroomId,
+          }
+        : undefined,
+
+      orderBy: {
+        name: "asc",
+      },
+
       select: {
         id: true,
         name: true,
-        section: { select: { id: true, name: true } },
-        _count: { select: { students: true } },
+
+        section: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+
+        _count: {
+          select: {
+            students: true,
+          },
+        },
       },
-      orderBy: { name: "asc" },
     });
 
     const classroomIds = classrooms.map((classroom) => classroom.id);
 
-    const [termPublications, sequencePublications, markGroups] =
-      await Promise.all([
-        prisma.resultPublication.findMany({
-          where: { termId, classroomId: { in: classroomIds } },
-          select: {
-            classroomId: true,
-            status: true,
-            publishedAt: true,
-            notes: true,
-            publishedBy: { select: { firstName: true, lastName: true } },
-          },
-        }),
+    // ==================================================
+    // LOAD TERM PUBLICATIONS
+    // ==================================================
 
-        prisma.sequencePublication.findMany({
-          where: {
-            classroomId: { in: classroomIds },
-            sequence: { termId },
-          },
-          select: {
-            classroomId: true,
-            sequenceId: true,
-            status: true,
-            publishedAt: true,
-          },
-        }),
+    const termPublications =
+      classroomIds.length > 0
+        ? await prisma.resultPublication.findMany({
+            where: {
+              termId,
+              classroomId: {
+                in: classroomIds,
+              },
+            },
 
-        prisma.mark.groupBy({
-          by: ["studentId"],
-          where: {
-            sequence: { termId },
-            student: { classroomId: { in: classroomIds } },
-          },
-          _count: { _all: true },
-        }),
-      ]);
+            select: {
+              id: true,
+              termId: true,
+              classroomId: true,
+              status: true,
+              publishedAt: true,
+              publishedById: true,
+              notes: true,
+            },
+          })
+        : [];
 
-    /* marks per class, resolved through the students of each class */
+    // ==================================================
+    // LOAD SEQUENCE PUBLICATIONS
+    // ==================================================
 
-    const studentsByClass = await prisma.student.groupBy({
-      by: ["classroomId"],
-      where: { classroomId: { in: classroomIds } },
-      _count: { _all: true },
-    });
-
-    const marksByClass = new Map<string, number>();
-
-    const students = await prisma.student.findMany({
-      where: { classroomId: { in: classroomIds } },
-      select: { id: true, classroomId: true },
-    });
-
-    const classByStudent = new Map(
-      students.map((student) => [student.id, student.classroomId])
+    const sequenceIds = term.sequences.map(
+      (sequence) => sequence.id
     );
 
+    const sequencePublications =
+      classroomIds.length > 0 && sequenceIds.length > 0
+        ? await prisma.sequencePublication.findMany({
+            where: {
+              classroomId: {
+                in: classroomIds,
+              },
+
+              sequenceId: {
+                in: sequenceIds,
+              },
+            },
+
+            select: {
+              id: true,
+              sequenceId: true,
+              classroomId: true,
+              status: true,
+              publishedAt: true,
+              publishedById: true,
+              notes: true,
+            },
+          })
+        : [];
+
+    // ==================================================
+    // LOAD STUDENTS
+    // ==================================================
+
+      const students =
+        classroomIds.length > 0
+          ? await prisma.student.findMany({
+              where: {
+                classroomId: {
+                  in: classroomIds,
+                },
+                status: {
+                  not: AccountStatus.SUSPENDED,
+                },
+              },
+              select: {
+                id: true,
+                classroomId: true,
+              },
+            })
+          : [];
+    const studentIds = students.map(
+      (student) => student.id
+    );
+
+    // ==================================================
+    // COUNT MARKS
+    // ==================================================
+
+    const markGroups =
+      studentIds.length > 0
+        ? await prisma.mark.groupBy({
+            by: ["studentId"],
+
+            where: {
+              studentId: {
+                in: studentIds,
+              },
+
+              termId,
+            },
+
+            _count: {
+              id: true,
+            },
+          })
+        : [];
+
+    const studentClassMap = new Map<string, string>();
+
+    for (const student of students) {
+      if (student.classroomId) {
+        studentClassMap.set(
+          student.id,
+          student.classroomId
+        );
+      }
+    }
+
+    const marksByClassroom = new Map<string, number>();
+
     for (const group of markGroups) {
-      const classId = classByStudent.get(group.studentId);
+      const classId = studentClassMap.get(
+        group.studentId
+      );
 
       if (!classId) continue;
 
-      marksByClass.set(
+      marksByClassroom.set(
         classId,
-        (marksByClass.get(classId) ?? 0) + group._count._all
+        (marksByClassroom.get(classId) ?? 0) +
+          group._count.id
       );
     }
 
-    const termMap = new Map(
-      termPublications.map((row) => [row.classroomId, row])
-    );
-
-    const sequenceMap = new Map(
-      sequencePublications.map((row) => [
-        `${row.sequenceId}:${row.classroomId}`,
-        row,
-      ])
-    );
-
-    let publishedCount = 0;
-    let pendingCount = 0;
+    // ==================================================
+    // BUILD CLASSROOM RESPONSE
+    // ==================================================
 
     const classes = classrooms.map((classroom) => {
-      const termPublication = termMap.get(classroom.id);
+      const termPublication =
+        termPublications.find(
+          (publication) =>
+            publication.classroomId === classroom.id
+        );
 
-      const sequences = term.sequences.map((sequence) => {
-        const publication = sequenceMap.get(`${sequence.id}:${classroom.id}`);
+      const sequences = term.sequences.map(
+        (sequence) => {
+          const publication =
+            sequencePublications.find(
+              (item) =>
+                item.classroomId === classroom.id &&
+                item.sequenceId === sequence.id
+            );
 
-        if (publication?.status === "PUBLISHED") publishedCount += 1;
-        else pendingCount += 1;
+          return {
+            id: sequence.id,
+            name: sequence.name,
+            order: sequence.order,
 
-        return {
-          id: sequence.id,
-          name: sequence.name,
-          order: sequence.order,
-          publication: publication
-            ? {
-                status: publication.status,
-                publishedAt: publication.publishedAt,
-              }
-            : null,
-        };
-      });
+            publication: publication
+              ? {
+                  id: publication.id,
+                  status: publication.status,
+                  publishedAt:
+                    publication.publishedAt,
+                  publishedById:
+                    publication.publishedById,
+                  notes: publication.notes,
+                }
+              : {
+                  id: null,
+                  status: "UNPUBLISHED",
+                  publishedAt: null,
+                  publishedById: null,
+                  notes: null,
+                },
+          };
+        }
+      );
 
       return {
         id: classroom.id,
         name: classroom.name,
         section: classroom.section,
-        students: classroom._count.students,
-        marks: marksByClass.get(classroom.id) ?? 0,
-        expectedStudents:
-          studentsByClass.find((row) => row.classroomId === classroom.id)
-            ?._count._all ?? 0,
+
+        studentCount:
+          classroom._count.students,
+
+        marksCount:
+          marksByClassroom.get(classroom.id) ?? 0,
+
         termPublication: termPublication
           ? {
+              id: termPublication.id,
               status: termPublication.status,
-              publishedAt: termPublication.publishedAt,
+              publishedAt:
+                termPublication.publishedAt,
+              publishedById:
+                termPublication.publishedById,
               notes: termPublication.notes,
-              publishedBy: termPublication.publishedBy
-                ? `${termPublication.publishedBy.firstName} ${termPublication.publishedBy.lastName}`
-                : null,
             }
-          : null,
+          : {
+              id: null,
+              status: "UNPUBLISHED",
+              publishedAt: null,
+              publishedById: null,
+              notes: null,
+            },
+
         sequences,
       };
     });
 
-    const termPublished = classes.filter(
-      (classroom) => classroom.termPublication?.status === "PUBLISHED"
+    // ==================================================
+    // SUMMARY
+    // ==================================================
+
+    const publishedClasses = classes.filter(
+      (item) =>
+        item.termPublication.status === "PUBLISHED"
     ).length;
 
+    const publishedSequences = classes.reduce(
+      (total, classroom) =>
+        total +
+        classroom.sequences.filter(
+          (sequence) =>
+            sequence.publication.status === "PUBLISHED"
+        ).length,
+      0
+    );
+
     return NextResponse.json({
-      term,
+      success: true,
+
+      term: {
+        id: term.id,
+        name: term.name,
+        order: term.order,
+        isCurrent: term.isCurrent,
+        academicYear: term.academicYear,
+      },
+
+      sequences: term.sequences,
+
       classes,
+
       summary: {
-        classes: classes.length,
-        sequences: classes.length * term.sequences.length,
-        sequencesPublished: publishedCount,
-        sequencesPending: pendingCount,
-        termsPublished: termPublished,
-        termsPending: classes.length - termPublished,
+        totalClasses: classes.length,
+
+        publishedClasses,
+
+        totalSequences:
+          classes.length *
+          term.sequences.length,
+
+        publishedSequences,
       },
     });
   } catch (error) {
-    return serverError("ADMIN PUBLICATIONS LIST ERROR", error);
+    return serverError(error);
   }
 }
 
-/**
- * POST /api/admin/publications
- * Publishes or unpublishes results at one of the two levels.
- *
- * Body:
- *   {
- *     scope: "TERM" | "SEQUENCE",
- *     termId: string,
- *     classroomId: string,
- *     sequenceId?: string,       // required for scope = SEQUENCE
- *     action: "PUBLISH" | "UNPUBLISH",
- *     notes?: string
- *   }
- */
-export async function POST(request: Request) {
-  const guard = await requireAdmin();
-  if (!guard.ok) return guard.response;
+// ======================================================
+// POST PUBLICATION
+// ======================================================
 
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
+    const admin = await requireAdmin();
 
-    const scope = (str(body.scope) || "TERM").toUpperCase();
-    const action = (str(body.action) || "PUBLISH").toUpperCase();
+    if (!admin) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Unauthorized.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const body = await req.json();
+
+    const scope = str(body.scope).toUpperCase();
+    const action = str(body.action).toUpperCase();
+
+    const publicationType = (
+      str(body.publicationType) || "RESULT"
+    ).toUpperCase();
+
     const termId = str(body.termId);
     const classroomId = str(body.classroomId);
     const sequenceId = str(body.sequenceId);
     const notes = str(body.notes);
 
-    if (!termId || !classroomId) {
-      return badRequest("A term and a class are required to publish results.");
-    }
+    // ==================================================
+    // VALIDATION
+    // ==================================================
 
     if (!["TERM", "SEQUENCE"].includes(scope)) {
-      return badRequest("Scope must be TERM or SEQUENCE.");
-    }
-
-    if (!["PUBLISH", "UNPUBLISH"].includes(action)) {
-      return badRequest("Action must be PUBLISH or UNPUBLISH.");
-    }
-
-    if (scope === "SEQUENCE" && !sequenceId) {
-      return badRequest("A sequence is required to publish a sequence.");
-    }
-
-    const [term, classroom] = await Promise.all([
-      prisma.term.findUnique({
-        where: { id: termId },
-        select: { id: true, name: true, academicYear: { select: { name: true } } },
-      }),
-      prisma.classroom.findUnique({
-        where: { id: classroomId },
-        select: {
-          id: true,
-          name: true,
-          students: { select: { parentId: true } },
-          assignments: { select: { teacher: { select: { userId: true } } } },
-        },
-      }),
-    ]);
-
-    if (!term) return badRequest("Term not found.");
-    if (!classroom) return badRequest("Class not found.");
-
-    const status = action === "PUBLISH" ? "PUBLISHED" : "UNPUBLISHED";
-
-    let label = `${classroom.name} · ${term.name}`;
-    let sequenceName: string | null = null;
-
-    if (scope === "SEQUENCE") {
-      const sequence = await prisma.sequence.findUnique({
-        where: { id: sequenceId },
-        select: { id: true, name: true, termId: true },
-      });
-
-      if (!sequence) return badRequest("Sequence not found.");
-
-      if (sequence.termId !== termId) {
-        return badRequest("The selected sequence does not belong to this term.");
-      }
-
-      sequenceName = sequence.name;
-      label = `${classroom.name} · ${sequence.name}`;
-    }
-
-    /* ---- make sure there is something to publish ---- */
-
-    const marks = await prisma.mark.count({
-      where: {
-        student: { classroomId },
-        ...(scope === "SEQUENCE"
-          ? { sequenceId }
-          : { sequence: { termId } }),
-      },
-    });
-
-    if (action === "PUBLISH" && marks === 0) {
       return badRequest(
-        `No mark has been recorded for ${label} yet, so there is nothing to publish.`
+        "Scope must be TERM or SEQUENCE."
       );
     }
 
-    /* ---- write the publication record ---- */
+    if (!["PUBLISH", "UNPUBLISH"].includes(action)) {
+      return badRequest(
+        "Action must be PUBLISH or UNPUBLISH."
+      );
+    }
 
-    if (scope === "TERM") {
-      await prisma.resultPublication.upsert({
-        where: { termId_classroomId: { termId, classroomId } },
-        update: {
-          status: status as never,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
-          notes: notes || null,
+    if (
+      !["RESULT", "REPORT_CARD"].includes(
+        publicationType
+      )
+    ) {
+      return badRequest(
+        "Publication type must be RESULT or REPORT_CARD."
+      );
+    }
+
+    if (!termId) {
+      return badRequest("Term is required.");
+    }
+
+    if (!classroomId) {
+      return badRequest("Classroom is required.");
+    }
+
+    if (
+      publicationType === "REPORT_CARD" &&
+      scope !== "TERM"
+    ) {
+      return badRequest(
+        "Report cards can only be published at term level."
+      );
+    }
+
+    if (scope === "SEQUENCE" && !sequenceId) {
+      return badRequest(
+        "Sequence is required for sequence publication."
+      );
+    }
+
+    // ==================================================
+    // LOAD TERM
+    // ==================================================
+
+    const term = await prisma.term.findUnique({
+      where: {
+        id: termId,
+      },
+
+      select: {
+        id: true,
+        name: true,
+
+        academicYear: {
+          select: {
+            id: true,
+            name: true,
+          },
         },
-        create: {
-          termId,
-          classroomId,
-          status: status as never,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
-          notes: notes || null,
+
+        sequences: {
+          select: {
+            id: true,
+            name: true,
+            order: true,
+          },
+        },
+      },
+    });
+
+    if (!term) {
+      return badRequest("Term not found.");
+    }
+
+    // ==================================================
+    // LOAD CLASSROOM
+    // ==================================================
+
+    const classroom =
+      await prisma.classroom.findUnique({
+        where: {
+          id: classroomId,
+        },
+
+        select: {
+          id: true,
+          name: true,
+
+          students: {
+            select: {
+              id: true,
+              parentId: true,
+            },
+          },
+
+          assignments: {
+            select: {
+              teacher: {
+                select: {
+                  userId: true,
+                },
+              },
+            },
+          },
         },
       });
-    } else {
-      await prisma.sequencePublication.upsert({
-        where: {
-          sequenceId_classroomId: { sequenceId, classroomId },
+
+    if (!classroom) {
+      return badRequest("Classroom not found.");
+    }
+
+    // ==================================================
+    // VALIDATE SEQUENCE
+    // ==================================================
+
+    let selectedSequence:
+      | {
+          id: string;
+          name: string;
+          order: number;
+        }
+      | null = null;
+
+    if (scope === "SEQUENCE") {
+      selectedSequence =
+        term.sequences.find(
+          (sequence) =>
+            sequence.id === sequenceId
+        ) ?? null;
+
+      if (!selectedSequence) {
+        return badRequest(
+          "The selected sequence does not belong to this term."
+        );
+      }
+    }
+
+    // ==================================================
+    // COUNT MARKS
+    // ==================================================
+
+    const markWhere: Prisma.MarkWhereInput = {
+      termId,
+
+      studentId: {
+        in: classroom.students.map(
+          (student) => student.id
+        ),
+      },
+
+      ...(scope === "SEQUENCE"
+        ? {
+            sequenceId,
+          }
+        : {}),
+    };
+
+    const marksCount = await prisma.mark.count({
+      where: markWhere,
+    });
+
+    if (action === "PUBLISH" && marksCount === 0) {
+      return badRequest(
+        publicationType === "REPORT_CARD"
+          ? "No marks have been recorded for this class and term. Generate the report cards after entering marks."
+          : "No marks have been recorded for this class and term."
+      );
+    }
+
+    // ==================================================
+    // STATUS
+    // ==================================================
+
+    const status: PublicationStatus =
+      action === "PUBLISH"
+        ? PublicationStatus.PUBLISHED
+        : PublicationStatus.UNPUBLISHED;
+
+    // ==================================================
+    // TERM PUBLICATION
+    // ==================================================
+
+    if (scope === "TERM") {
+      const publication =
+        await prisma.resultPublication.upsert({
+          where: {
+            termId_classroomId: {
+              termId,
+              classroomId,
+            },
+          },
+
+          create: {
+            termId,
+            classroomId,
+            status,
+
+            publishedAt:
+              action === "PUBLISH"
+                ? new Date()
+                : null,
+
+            publishedById:
+              action === "PUBLISH"
+                ? admin.id
+                : null,
+
+            notes: notes || null,
+          },
+
+          update: {
+            status,
+
+            publishedAt:
+              action === "PUBLISH"
+                ? new Date()
+                : null,
+
+            publishedById:
+              action === "PUBLISH"
+                ? admin.id
+                : null,
+
+            notes: notes || null,
+          },
+        });
+
+      // ==================================================
+      // AUDIT LOG
+      // ==================================================
+
+      await prisma.auditLog.create({
+        data: {
+          userId: admin.id ?? null,
+
+          action:
+            action === "PUBLISH"
+              ? "PUBLISH_RESULTS"
+              : "UNPUBLISH_RESULTS",
+
+          entityType: "ResultPublication",
+
+          entityId: publication.id,
+
+          description:
+            publicationType === "REPORT_CARD"
+              ? `Published report cards for ${term.name} - ${classroom.name}.`
+              : action === "PUBLISH"
+              ? `Published results for ${term.name} - ${classroom.name}.`
+              : `Unpublished results for ${term.name} - ${classroom.name}.`,
+
+          metadata: {
+            scope,
+            publicationType,
+            termId,
+            classroomId,
+            sequenceId: sequenceId || null,
+            marksCount,
+            notes: notes || null,
+          },
         },
-        update: {
-          status: status as never,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
-        },
-        create: {
-          sequenceId,
+      });
+
+      // ==================================================
+      // NOTIFICATIONS
+      // ==================================================
+
+      let notified = 0;
+
+      if (action === "PUBLISH") {
+        const parentIds = Array.from(
+          new Set(
+            classroom.students
+              .map(
+                (student) =>
+                  student.parentId
+              )
+              .filter(
+                (
+                  parentId
+                ): parentId is string =>
+                  Boolean(parentId)
+              )
+          )
+        );
+
+        const teacherIds = Array.from(
+          new Set(
+            classroom.assignments
+              .map(
+                (assignment) =>
+                  assignment.teacher.userId
+              )
+              .filter(
+                (
+                  teacherId
+                ): teacherId is string =>
+                  Boolean(teacherId)
+              )
+          )
+        );
+
+        if (
+          publicationType === "REPORT_CARD"
+        ) {
+          const notifications =
+            parentIds.map(
+              (parentId) => ({
+                userId: parentId,
+
+                type:
+                  "REPORT_AVAILABLE" as const,
+
+                title:
+                  `Report card available — ${term.name}`,
+
+                message:
+                  `The ${term.name} report card for ${classroom.name} (${term.academicYear.name}) is now available.`,
+
+                actionUrl:
+                  "/parent/report-cards",
+
+                audience: "CLASS",
+
+                relatedType:
+                  "Classroom",
+
+                relatedId:
+                  classroomId,
+              })
+            );
+
+          if (notifications.length > 0) {
+            await prisma.notification.createMany({
+              data: notifications,
+            });
+          }
+
+          notified =
+            notifications.length;
+        } else {
+          const notifications = [
+            ...parentIds.map(
+              (parentId) => ({
+                userId: parentId,
+
+                type:
+                  "RESULT_PUBLISHED" as const,
+
+                title:
+                  `Results published — ${term.name}`,
+
+                message:
+                  `Results for ${classroom.name} (${term.academicYear.name}) are now available.`,
+
+                actionUrl:
+                  "/parent/children",
+
+                audience: "CLASS",
+
+                relatedType:
+                  "Classroom",
+
+                relatedId:
+                  classroomId,
+              })
+            ),
+
+            ...teacherIds.map(
+              (teacherId) => ({
+                userId: teacherId,
+
+                type:
+                  "RESULT_PUBLISHED" as const,
+
+                title:
+                  `Results published — ${term.name}`,
+
+                message:
+                  `Results for ${classroom.name} (${term.academicYear.name}) have been published.`,
+
+                actionUrl:
+                  "/teacher",
+
+                audience: "CLASS",
+
+                relatedType:
+                  "Classroom",
+
+                relatedId:
+                  classroomId,
+              })
+            ),
+          ];
+
+          if (notifications.length > 0) {
+            await prisma.notification.createMany({
+              data: notifications,
+            });
+          }
+
+          notified =
+            notifications.length;
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+
+        message:
+          action === "PUBLISH"
+            ? publicationType ===
+              "REPORT_CARD"
+              ? `Report cards for ${classroom.name} — ${term.name} have been published successfully.`
+              : `Results for ${classroom.name} — ${term.name} have been published successfully.`
+            : `Publication for ${classroom.name} — ${term.name} has been unpublished.`,
+
+        publication: {
+          id: publication.id,
+          scope,
+          publicationType,
+          status: publication.status,
+          termId,
           classroomId,
-          status: status as never,
-          publishedAt: action === "PUBLISH" ? new Date() : null,
-          publishedById: guard.user.id,
+          sequenceId: null,
+          publishedAt:
+            publication.publishedAt,
         },
+
+        marks: marksCount,
+
+        notified,
       });
     }
 
-    await logAudit({
-      actorId: guard.user.id,
-      actorName: guard.user.fullName,
-      action: action === "PUBLISH" ? "RESULT_PUBLISHED" : "RESULT_UNPUBLISHED",
-      entityType: scope === "TERM" ? "ResultPublication" : "SequencePublication",
-      entityId: scope === "TERM" ? `${termId}:${classroomId}` : `${sequenceId}:${classroomId}`,
-      description: `${action === "PUBLISH" ? "Published" : "Unpublished"} ${label} (${marks} mark(s))`,
-      metadata: { scope, termId, classroomId, sequenceId: sequenceId || null },
+    // ==================================================
+    // SEQUENCE PUBLICATION
+    // ==================================================
+
+    const sequencePublication =
+      await prisma.sequencePublication.upsert({
+        where: {
+          sequenceId_classroomId: {
+            sequenceId,
+            classroomId,
+          },
+        },
+
+        create: {
+          sequenceId,
+          classroomId,
+          status,
+
+          publishedAt:
+            action === "PUBLISH"
+              ? new Date()
+              : null,
+
+          publishedById:
+            action === "PUBLISH"
+              ? admin.id
+              : null,
+
+          notes: notes || null,
+        },
+
+        update: {
+          status,
+
+          publishedAt:
+            action === "PUBLISH"
+              ? new Date()
+              : null,
+
+          publishedById:
+            action === "PUBLISH"
+              ? admin.id
+              : null,
+
+          notes: notes || null,
+        },
+      });
+
+    // ==================================================
+    // AUDIT LOG
+    // ==================================================
+
+    await prisma.auditLog.create({
+      data: {
+        userId: admin.id ?? null,
+
+        action:
+          action === "PUBLISH"
+            ? "PUBLISH_RESULTS"
+            : "UNPUBLISH_RESULTS",
+
+        entityType:
+          "SequencePublication",
+
+        entityId:
+          sequencePublication.id,
+
+        description:
+          action === "PUBLISH"
+            ? `Published ${selectedSequence?.name ?? "sequence"} results for ${classroom.name}.`
+            : `Unpublished ${selectedSequence?.name ?? "sequence"} results for ${classroom.name}.`,
+
+        metadata: {
+          scope,
+          publicationType,
+          termId,
+          classroomId,
+          sequenceId,
+          marksCount,
+          notes: notes || null,
+        },
+      },
     });
 
-    /* ---- notify the parents and the teachers of the class ---- */
+    // ==================================================
+    // SEQUENCE NOTIFICATIONS
+    // ==================================================
 
     let notified = 0;
 
@@ -378,58 +993,143 @@ export async function POST(request: Request) {
       const parentIds = Array.from(
         new Set(
           classroom.students
-            .map((student) => student.parentId)
-            .filter((id): id is string => Boolean(id))
+            .map(
+              (student) =>
+                student.parentId
+            )
+            .filter(
+              (
+                parentId
+              ): parentId is string =>
+                Boolean(parentId)
+            )
         )
       );
 
-      const parents = parentIds.length
-        ? await prisma.parent.findMany({
-            where: { id: { in: parentIds } },
-            select: { userId: true },
-          })
-        : [];
-
-      const recipientIds = Array.from(
-        new Set([
-          ...parents.map((parent) => parent.userId),
-          ...classroom.assignments.map((assignment) => assignment.teacher.userId),
-        ])
+      const teacherIds = Array.from(
+        new Set(
+          classroom.assignments
+            .map(
+              (assignment) =>
+                assignment.teacher.userId
+            )
+            .filter(
+              (
+                teacherId
+              ): teacherId is string =>
+                Boolean(teacherId)
+            )
+        )
       );
 
-      if (recipientIds.length) {
-        const result = await createManyNotifications(recipientIds, {
-          title:
-            scope === "TERM"
-              ? `Results published — ${term.name}`
-              : `Results published — ${sequenceName ?? "sequence"}`,
-          message:
-            scope === "TERM"
-              ? `The ${term.name} results of ${classroom.name} (${term.academicYear.name}) are now available.`
-              : `The ${sequenceName} results of ${classroom.name} are now available.`,
-          type: "RESULT_PUBLISHED",
-          senderId: guard.user.id,
-          audience: "CLASS",
-          actionUrl: "/parent/children",
-          relatedType: "Classroom",
-          relatedId: classroomId,
-        });
+      const notifications = [
+        ...parentIds.map(
+          (parentId) => ({
+            userId: parentId,
 
-        notified = result.count;
+            type:
+              "RESULT_PUBLISHED" as const,
+
+            title:
+              `Results published — ${
+                selectedSequence?.name ??
+                "Sequence"
+              }`,
+
+            message:
+              `${
+                selectedSequence?.name ??
+                "Sequence results"
+              } for ${classroom.name} are now available.`,
+
+            actionUrl:
+              "/parent/children",
+
+            audience: "CLASS",
+
+            relatedType:
+              "Classroom",
+
+            relatedId:
+              classroomId,
+          })
+        ),
+
+        ...teacherIds.map(
+          (teacherId) => ({
+            userId: teacherId,
+
+            type:
+              "RESULT_PUBLISHED" as const,
+
+            title:
+              `Results published — ${
+                selectedSequence?.name ??
+                "Sequence"
+              }`,
+
+            message:
+              `${
+                selectedSequence?.name ??
+                "Sequence results"
+              } for ${classroom.name} have been published.`,
+
+            actionUrl:
+              "/teacher",
+
+            audience: "CLASS",
+
+            relatedType:
+              "Classroom",
+
+            relatedId:
+              classroomId,
+          })
+        ),
+      ];
+
+      if (notifications.length > 0) {
+        await prisma.notification.createMany({
+          data: notifications,
+        });
       }
+
+      notified =
+        notifications.length;
     }
 
     return NextResponse.json({
+      success: true,
+
       message:
         action === "PUBLISH"
-          ? `${label} published${notified ? ` and ${notified} notification(s) sent` : ""}.`
-          : `${label} unpublished.`,
-      scope,
-      status,
-      marks,
+          ? `${
+              selectedSequence?.name ??
+              "Sequence"
+            } results for ${classroom.name} have been published successfully.`
+          : `${
+              selectedSequence?.name ??
+              "Sequence"
+            } publication for ${classroom.name} has been unpublished.`,
+
+      publication: {
+        id: sequencePublication.id,
+        scope,
+        publicationType,
+        status:
+          sequencePublication.status,
+        termId,
+        classroomId,
+        sequenceId,
+        publishedAt:
+          sequencePublication.publishedAt,
+      },
+
+      marks: marksCount,
+
       notified,
     });
   } catch (error) {
-    return serverError("ADMIN PUBLICATION UPDATE ERROR", error);
+    return serverError(error);
   }
 }

@@ -1,218 +1,382 @@
-// app/api/admin/reports/report-cards/route.ts
+import { NextRequest, NextResponse } from "next/server";
 
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/admin-auth";
 import prisma from "@/lib/prisma";
 
-export const runtime = "nodejs";
+import { requireAdmin } from "@/lib/admin-auth";
 
-export async function GET(request: Request) {
-  const guard = await requireAdmin();
+// ======================================================
+// HELPERS
+// ======================================================
 
-  if (!guard.ok) {
-    return guard.response;
-  }
+function badRequest(message: string) {
+  return NextResponse.json(
+    {
+      success: false,
+      message,
+    },
+    { status: 400 }
+  );
+}
 
+function serverError(message = "Internal server error.") {
+  return NextResponse.json(
+    {
+      success: false,
+      message,
+    },
+    { status: 500 }
+  );
+}
+
+// ======================================================
+// GET REPORT CARD DATA
+// ======================================================
+
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
+    const admin = await requireAdmin();
 
-    const academicYearId = searchParams.get("academicYearId");
-    const termId = searchParams.get("termId");
-    const sequenceId = searchParams.get("sequenceId");
-    const classroomId = searchParams.get("classroomId");
-
-    if (!academicYearId || !termId || !sequenceId || !classroomId) {
+    if (!admin) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Academic year, term, sequence and class are required.",
+          message: "Unauthorized.",
         },
-        { status: 400 }
+        { status: 401 }
       );
     }
 
-    // ---------------------------------------------------------
-    // 1. Find the classroom
-    // ---------------------------------------------------------
-    const classroom = await prisma.classroom.findUnique({
-      where: {
-        id: classroomId,
-      },
-    });
+    const { searchParams } = new URL(req.url);
 
-    if (!classroom) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Classroom not found.",
-        },
-        { status: 404 }
-      );
+    const academicYearId =
+      searchParams.get("academicYearId")?.trim() || "";
+
+    const termId =
+      searchParams.get("termId")?.trim() || "";
+
+    const sequenceId =
+      searchParams.get("sequenceId")?.trim() || "";
+
+    const classroomId =
+      searchParams.get("classroomId")?.trim() || "";
+
+    // ==================================================
+    // VALIDATE PARAMETERS
+    // ==================================================
+
+    if (!academicYearId) {
+      return badRequest("Academic year is required.");
     }
 
-    // ---------------------------------------------------------
-    // 2. Find the academic year
-    // ---------------------------------------------------------
-    const academicYear = await prisma.academicYear.findUnique({
-      where: {
-        id: academicYearId,
-      },
-    });
+    if (!termId) {
+      return badRequest("Term is required.");
+    }
+
+    if (!sequenceId) {
+      return badRequest("Sequence is required.");
+    }
+
+    if (!classroomId) {
+      return badRequest("Classroom is required.");
+    }
+
+    // ==================================================
+    // VALIDATE ACADEMIC YEAR
+    // ==================================================
+
+    const academicYear =
+      await prisma.academicYear.findUnique({
+        where: {
+          id: academicYearId,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
 
     if (!academicYear) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Academic year not found.",
-        },
-        { status: 404 }
-      );
+      return badRequest("Academic year not found.");
     }
 
-    // ---------------------------------------------------------
-    // 3. Find the term
-    // ---------------------------------------------------------
+    // ==================================================
+    // VALIDATE TERM
+    // ==================================================
+
     const term = await prisma.term.findUnique({
       where: {
         id: termId,
       },
+      select: {
+        id: true,
+        name: true,
+        order: true,
+        academicYearId: true,
+      },
     });
 
     if (!term) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Term not found.",
-        },
-        { status: 404 }
-      );
+      return badRequest("Term not found.");
     }
 
     if (term.academicYearId !== academicYearId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "The selected term does not belong to the selected academic year.",
-        },
-        { status: 400 }
+      return badRequest(
+        "The selected term does not belong to the selected academic year."
       );
     }
 
-    // ---------------------------------------------------------
-    // 4. Find the sequence
-    // ---------------------------------------------------------
+    // ==================================================
+    // VALIDATE SEQUENCE
+    // ==================================================
+
     const sequence = await prisma.sequence.findUnique({
       where: {
         id: sequenceId,
       },
+      select: {
+        id: true,
+        name: true,
+        order: true,
+        termId: true,
+      },
     });
 
     if (!sequence) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Sequence not found.",
-        },
-        { status: 404 }
-      );
+      return badRequest("Sequence not found.");
     }
 
-    // Make sure the selected sequence belongs to the selected term.
     if (sequence.termId !== termId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "The selected sequence does not belong to the selected term.",
-        },
-        { status: 400 }
+      return badRequest(
+        "The selected sequence does not belong to the selected term."
       );
     }
 
-    // ---------------------------------------------------------
-    // 5. Get active students and their marks
-    // ---------------------------------------------------------
+    // ==================================================
+    // VALIDATE CLASSROOM
+    // ==================================================
+
+    const classroom = await prisma.classroom.findUnique({
+      where: {
+        id: classroomId,
+      },
+      select: {
+        id: true,
+        name: true,
+        section: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!classroom) {
+      return badRequest("Classroom not found.");
+    }
+
+    // ==================================================
+    // CHECK PUBLICATION
+    // ==================================================
+
+    const publication =
+      await prisma.resultPublication.findUnique({
+        where: {
+          termId_classroomId: {
+            termId,
+            classroomId,
+          },
+        },
+        select: {
+          status: true,
+          publishedAt: true,
+          publishedById: true,
+          notes: true,
+        },
+      });
+
+    const isPublished =
+      publication?.status === "PUBLISHED";
+
+    // ==================================================
+    // LOAD STUDENTS
+    // ==================================================
+
     const students = await prisma.student.findMany({
       where: {
         classroomId,
-        status: "ACTIVE",
       },
-      include: {
-        marks: {
-          where: {
-            termId,
-            sequenceId,
-          },
-          select: {
-            id: true,
-            subjectId: true,
-            teacherId: true,
-            termId: true,
-            sequenceId: true,
-            score: true,
-          },
+      orderBy: [
+        {
+          lastName: "asc",
         },
-      },
-      orderBy: {
-        firstName: "asc",
+        {
+          firstName: "asc",
+        },
+      ],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
       },
     });
 
-    // ---------------------------------------------------------
-    // 6. Calculate each student's average
-    // ---------------------------------------------------------
-    const studentReports = students.map((student) => {
-      const scores = student.marks
-        .map((mark) => Number(mark.score))
-        .filter((score) => Number.isFinite(score));
+    // ==================================================
+    // STUDENT IDS
+    // ==================================================
 
-      const average =
-        scores.length > 0
-          ? scores.reduce((sum, score) => sum + score, 0) /
-            scores.length
-          : 0;
+    const studentIds = students.map(
+      (student) => student.id
+    );
 
-      return {
-        id: student.id,
-        name: `${student.firstName} ${student.lastName}`,
-        average: Number(average.toFixed(2)),
-        totalSubjects: scores.length,
-      };
-    });
+    // ==================================================
+    // LOAD MARKS
+    // ==================================================
 
-    // ---------------------------------------------------------
-    // 7. Sort students by average
-    // ---------------------------------------------------------
-    studentReports.sort((a, b) => {
-      if (b.average !== a.average) {
-        return b.average - a.average;
+    const marks =
+      studentIds.length > 0
+        ? await prisma.mark.findMany({
+            where: {
+              studentId: {
+                in: studentIds,
+              },
+              termId,
+              sequenceId,
+            },
+            select: {
+              id: true,
+              studentId: true,
+              subjectId: true,
+              score: true,
+            },
+          })
+        : [];
+
+    // ==================================================
+    // GROUP MARKS BY STUDENT
+    // ==================================================
+
+    const marksByStudent = new Map<
+      string,
+      number[]
+    >();
+
+    for (const mark of marks) {
+      const existing =
+        marksByStudent.get(mark.studentId) ?? [];
+
+      existing.push(Number(mark.score));
+
+      marksByStudent.set(
+        mark.studentId,
+        existing
+      );
+    }
+
+    // ==================================================
+    // CALCULATE STUDENT RESULTS
+    // ==================================================
+
+    const calculatedStudents = students.map(
+      (student) => {
+        const studentMarks =
+          marksByStudent.get(student.id) ?? [];
+
+        const total = studentMarks.reduce(
+          (sum, score) => sum + score,
+          0
+        );
+
+        const average =
+          studentMarks.length > 0
+            ? total / studentMarks.length
+            : 0;
+
+        return {
+          id: student.id,
+
+          // IMPORTANT:
+          // The frontend expects "name".
+          name: `${student.firstName} ${student.lastName}`.trim(),
+
+          firstName: student.firstName,
+          lastName: student.lastName,
+
+          marksRecorded: studentMarks.length,
+
+          total: Number(
+            total.toFixed(2)
+          ),
+
+          average: Number(
+            average.toFixed(2)
+          ),
+        };
       }
+    );
 
-      return a.name.localeCompare(b.name);
-    });
+    // ==================================================
+    // RANK STUDENTS
+    // ==================================================
 
-    // ---------------------------------------------------------
-    // 8. Assign positions
-    // ---------------------------------------------------------
-    const rankedStudents = studentReports.map((student, index) => ({
-      ...student,
-      rank: index + 1,
-    }));
+    const rankedStudents = [
+      ...calculatedStudents,
+    ].sort(
+      (a, b) => b.average - a.average
+    );
 
-    // ---------------------------------------------------------
-    // 9. Calculate class average
-    // ---------------------------------------------------------
+    let currentRank = 0;
+    let previousAverage: number | null = null;
+
+    const studentsWithRank =
+      rankedStudents.map(
+        (student, index) => {
+          if (
+            previousAverage === null ||
+            student.average !== previousAverage
+          ) {
+            currentRank = index + 1;
+          }
+
+          previousAverage =
+            student.average;
+
+          return {
+            ...student,
+
+            // Students without marks do not receive
+            // a rank.
+            position:
+              student.marksRecorded > 0
+                ? currentRank
+                : null,
+          };
+        }
+      );
+
+    // ==================================================
+    // CLASS AVERAGE
+    // ==================================================
+
+    const studentsWithMarks =
+      studentsWithRank.filter(
+        (student) =>
+          student.marksRecorded > 0
+      );
+
     const classAverage =
-      rankedStudents.length > 0
-        ? rankedStudents.reduce(
-            (sum, student) => sum + student.average,
+      studentsWithMarks.length > 0
+        ? studentsWithMarks.reduce(
+            (sum, student) =>
+              sum + student.average,
             0
-          ) / rankedStudents.length
+          ) / studentsWithMarks.length
         : 0;
 
-    // ---------------------------------------------------------
-    // 10. Return report-card data
-    // ---------------------------------------------------------
+    // ==================================================
+    // RESPONSE
+    // ==================================================
+
     return NextResponse.json({
       success: true,
 
@@ -221,48 +385,90 @@ export async function GET(request: Request) {
         name: academicYear.name,
       },
 
-      classroom: {
-        id: classroom.id,
-        name: classroom.name,
-      },
-
       term: {
         id: term.id,
         name: term.name,
+        order: term.order,
       },
 
       sequence: {
         id: sequence.id,
         name: sequence.name,
+        order: sequence.order,
       },
+
+      classroom: {
+        id: classroom.id,
+        name: classroom.name,
+        section: classroom.section,
+      },
+
+      // ==================================================
+      // PUBLICATION
+      // ==================================================
+
+      publication: {
+        published: isPublished,
+
+        status:
+          publication?.status ??
+          "UNPUBLISHED",
+
+        publishedAt:
+          publication?.publishedAt ?? null,
+
+        publishedById:
+          publication?.publishedById ?? null,
+
+        notes:
+          publication?.notes ?? null,
+      },
+
+      // ==================================================
+      // SUMMARY
+      // ==================================================
 
       summary: {
-        totalStudents: rankedStudents.length,
-        classAverage: Number(classAverage.toFixed(2)),
-        published: true,
+        // All students enrolled in the selected class
+        totalStudents: students.length,
+
+        // Only students who have marks
+        studentsWithMarks:
+          studentsWithMarks.length,
+
+        classAverage: Number(
+          classAverage.toFixed(2)
+        ),
+
+        published: isPublished,
       },
 
-      students: rankedStudents,
+      // ==================================================
+      // STUDENTS
+      // ==================================================
+
+      students: studentsWithRank,
     });
   } catch (error) {
-    console.error("ADMIN REPORT CARD ERROR:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
-
-        stack:
-          process.env.NODE_ENV === "development"
-            ? error instanceof Error
-              ? error.stack
-              : null
-            : undefined,
-      },
-      { status: 500 }
+    console.error(
+      "================================================"
     );
+
+    console.error(
+      "[GET /api/admin/reports/report-cards] ERROR:"
+    );
+
+    console.error(error);
+
+    console.error(
+      "================================================"
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unknown server error.";
+
+    return serverError(message);
   }
 }
