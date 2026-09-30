@@ -10,12 +10,16 @@ import {
   ChevronRight,
   Download,
   FileText,
+  Filter,
   GraduationCap,
+  RefreshCw,
+  Sparkles,
   TrendingDown,
   TrendingUp,
   Users,
   X,
 } from "lucide-react";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import Sidebar from "@/components/admin/SideBar";
 import Navbar from "@/components/admin/NavBar";
@@ -39,6 +43,14 @@ type SubjectPerformance = {
   marksRecorded: number;
 };
 
+type AcademicYearOption = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  startDate: string;
+  endDate: string;
+};
+
 type ClassPerformance = {
   classroomId: string;
   class: string;
@@ -48,6 +60,23 @@ type ClassPerformance = {
   passRate: number | null;
   attendanceRate: number | null;
   subjects: SubjectPerformance[];
+};
+
+type TermOption = {
+  id: string;
+  name: string;
+  academicYearId: string;
+  sequences: {
+    id: string;
+    name: string;
+    termId: string;
+  }[];
+};
+
+type ClassroomOption = {
+  id: string;
+  name: string;
+  section: string;
 };
 
 type SectionPerformance = {
@@ -63,7 +92,17 @@ type SchoolSubjectPerformance = {
   subjectId: string;
   subject: string;
   average: number | null;
+  students: number;
   marksRecorded: number;
+};
+
+type PerformanceDistribution = {
+  excellent: number;
+  veryGood: number;
+  good: number;
+  pass: number;
+  fail: number;
+  total: number;
 };
 
 type AnalyticsData = {
@@ -77,11 +116,25 @@ type AnalyticsData = {
     endDate: string;
   };
 
+  academicYears: AcademicYearOption[];
+
+  terms: TermOption[];
+
+  classrooms: ClassroomOption[];
+
+  filters: {
+    academicYearId: string;
+    termId: string | null;
+    classroomId: string | null;
+  };
+
   sections: SectionPerformance[];
 
   classes: ClassPerformance[];
 
   subjects: SchoolSubjectPerformance[];
+
+  performanceDistribution: PerformanceDistribution;
 
   summary: {
     students: number;
@@ -92,18 +145,29 @@ type AnalyticsData = {
   };
 
   aiAnalysisData: {
-    strongestSubjects: SchoolSubjectPerformance[];
-    weakestSubjects: SchoolSubjectPerformance[];
+    strongestSubjects: SubjectPerformance[];
+    weakestSubjects: SubjectPerformance[];
 
     classPerformance: {
       classroomId: string;
       class: string;
       section: string;
       average: number | null;
+      passRate: number | null;
+      attendanceRate: number | null;
       subjects: SubjectPerformance[];
     }[];
+
+    performanceDistribution: PerformanceDistribution;
+
+    summary: {
+      average: number | null;
+      totalMarks: number;
+      totalStudents: number;
+    };
   };
 };
+
 
 /* =========================================================
    HELPERS
@@ -526,6 +590,245 @@ async function downloadPdfFromApi(
   }, 1000);
 }
 
+async function downloadAnalysisPdf(
+  analytics: AnalyticsData,
+  scopeLabel: string
+) {
+  const pdf = await PDFDocument.create();
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const pageSize: [number, number] = [595, 842];
+  const margin = 44;
+  const purple = rgb(0.42, 0.2, 0.65);
+  let page = pdf.addPage(pageSize);
+  let y = page.getHeight() - margin;
+
+  const safeText = (value: unknown) =>
+    String(value ?? "—").replace(/[^\x20-\x7E]/g, " ");
+
+  const addPage = () => {
+    page = pdf.addPage(pageSize);
+    y = page.getHeight() - margin;
+  };
+
+  const ensureSpace = (height: number) => {
+    if (y - height < margin) addPage();
+  };
+
+  const drawText = (
+    value: unknown,
+    options: { size?: number; bold?: boolean; color?: ReturnType<typeof rgb>; x?: number } = {}
+  ) => {
+    const size = options.size ?? 10;
+    page.drawText(safeText(value), {
+      x: options.x ?? margin,
+      y,
+      size,
+      font: options.bold ? bold : regular,
+      color: options.color ?? rgb(0.12, 0.16, 0.22),
+      maxWidth: page.getWidth() - margin * 2,
+    });
+    y -= size + 7;
+  };
+
+  const drawSectionTitle = (title: string) => {
+    ensureSpace(30);
+    y -= 8;
+    drawText(title, { size: 14, bold: true, color: purple });
+    page.drawLine({
+      start: { x: margin, y: y + 2 },
+      end: { x: page.getWidth() - margin, y: y + 2 },
+      thickness: 1.5,
+      color: purple,
+    });
+    y -= 5;
+  };
+
+  drawText("ALL NATIONS SECONDARY SCHOOL", {
+    size: 10,
+    bold: true,
+    color: rgb(0.16, 0.36, 0.34),
+  });
+  drawText("Academic Performance Analysis", { size: 22, bold: true });
+  drawText(scopeLabel, { size: 11, color: rgb(0.38, 0.42, 0.46) });
+  const selectedClassroom = analytics.classrooms.find(
+    (classroom) => classroom.id === analytics.filters.classroomId
+  );
+  drawText(
+    `Class: ${selectedClassroom ? `${selectedClassroom.name}${selectedClassroom.section ? ` (${selectedClassroom.section})` : ""}` : "All classes"}`,
+    { size: 10, bold: true }
+  );
+  drawText(`Generated ${new Date().toLocaleDateString()}`, {
+    size: 9,
+    color: rgb(0.38, 0.42, 0.46),
+  });
+  page.drawLine({
+    start: { x: margin, y: y + 2 },
+    end: { x: page.getWidth() - margin, y: y + 2 },
+    thickness: 2,
+    color: purple,
+  });
+  y -= 8;
+
+  drawSectionTitle("School Summary");
+  const summary = [
+    ["Students", analytics.summary.students],
+    ["Classes", analytics.summary.classes],
+    ["School Average", analytics.summary.average === null ? "No data" : `${analytics.summary.average.toFixed(1)}%`],
+    ["Marks Recorded", analytics.summary.marksRecorded],
+    ["Attendance Records", analytics.summary.attendanceRecords],
+  ];
+  for (const [label, value] of summary) {
+    ensureSpace(20);
+    drawText(`${label}: ${value}`, { size: 10 });
+  }
+
+  drawSectionTitle("Mark Distribution");
+  const distribution = [
+    ["Excellent (80-100)", analytics.performanceDistribution.excellent],
+    ["Very Good (70-79)", analytics.performanceDistribution.veryGood],
+    ["Good (60-69)", analytics.performanceDistribution.good],
+    ["Pass (50-59)", analytics.performanceDistribution.pass],
+    ["Fail (0-49)", analytics.performanceDistribution.fail],
+  ] as const;
+  for (const [label, count] of distribution) {
+    ensureSpace(28);
+    const chartX = margin + 170;
+    const chartWidth = 240;
+    const ratio = analytics.performanceDistribution.total > 0
+      ? count / analytics.performanceDistribution.total
+      : 0;
+    page.drawText(safeText(label), { x: margin, y, size: 9, font: regular });
+    page.drawRectangle({ x: chartX, y: y - 2, width: chartWidth, height: 9, color: rgb(0.91, 0.93, 0.94) });
+    if (ratio > 0) {
+      page.drawRectangle({ x: chartX, y: y - 2, width: chartWidth * ratio, height: 9, color: rgb(0.16, 0.5, 0.44) });
+    }
+    page.drawText(`${count} (${(ratio * 100).toFixed(1)}%)`, {
+      x: chartX + chartWidth + 8,
+      y,
+      size: 8,
+      font: regular,
+    });
+    y -= 20;
+  }
+  drawText(`Total marks: ${analytics.performanceDistribution.total}`, { size: 9 });
+
+  drawSectionTitle("Class Averages");
+  const classes = [...analytics.classes]
+    .sort((left, right) => (right.average ?? -1) - (left.average ?? -1))
+    .slice(0, 12);
+  for (const classItem of classes) {
+    ensureSpace(28);
+    const label = `${classItem.class} (${classItem.section})`;
+    const chartX = margin + 170;
+    const chartWidth = 240;
+    const ratio = Math.max(0, Math.min(1, (classItem.average ?? 0) / 100));
+    page.drawText(safeText(label).slice(0, 32), { x: margin, y, size: 9, font: regular });
+    page.drawRectangle({ x: chartX, y: y - 2, width: chartWidth, height: 9, color: rgb(0.91, 0.93, 0.94) });
+    if (ratio > 0) {
+      page.drawRectangle({ x: chartX, y: y - 2, width: chartWidth * ratio, height: 9, color: rgb(0.22, 0.43, 0.69) });
+    }
+    page.drawText(classItem.average === null ? "No data" : `${classItem.average.toFixed(1)}%`, {
+      x: chartX + chartWidth + 8,
+      y,
+      size: 8,
+      font: regular,
+    });
+    y -= 20;
+  }
+  if (classes.length === 0) drawText("No class performance data available.", { size: 9 });
+
+  drawSectionTitle("Subject Performance");
+  const subjects = [...analytics.subjects]
+    .sort((left, right) => (right.average ?? -1) - (left.average ?? -1));
+  for (const subject of subjects) {
+    ensureSpace(20);
+    drawText(`${subject.subject}: ${subject.average === null ? "No data" : `${subject.average.toFixed(1)}%`} | ${subject.marksRecorded} marks`, {
+      size: 9,
+    });
+  }
+  if (subjects.length === 0) drawText("No subject performance data available.", { size: 9 });
+
+  drawSectionTitle("Subject Highlights");
+  const strongestSubjects = analytics.aiAnalysisData.strongestSubjects.slice(0, 5);
+  const attentionSubjects = analytics.aiAnalysisData.weakestSubjects.slice(0, 5);
+  const columnGap = 20;
+  const columnWidth = (page.getWidth() - margin * 2 - columnGap) / 2;
+  const leftColumnX = margin;
+  const rightColumnX = margin + columnWidth + columnGap;
+
+  page.drawText("Strongest Subjects", {
+    x: leftColumnX,
+    y,
+    size: 10,
+    font: bold,
+    color: purple,
+  });
+  page.drawText("Subjects Requiring Attention", {
+    x: rightColumnX,
+    y,
+    size: 10,
+    font: bold,
+    color: purple,
+    maxWidth: columnWidth,
+  });
+  y -= 16;
+  for (const columnX of [leftColumnX, rightColumnX]) {
+    page.drawLine({
+      start: { x: columnX, y },
+      end: { x: columnX + columnWidth, y },
+      thickness: 1,
+      color: purple,
+    });
+  }
+  y -= 12;
+
+  const subjectRowCount = Math.max(strongestSubjects.length, attentionSubjects.length, 1);
+  for (let index = 0; index < subjectRowCount; index += 1) {
+    ensureSpace(18);
+    const strongest = strongestSubjects[index];
+    const needsAttention = attentionSubjects[index];
+    const strongestText = strongest
+      ? `${strongest.subject}: ${strongest.average === null ? "No data" : `${strongest.average.toFixed(1)}%`}`
+      : strongestSubjects.length === 0 ? "No subject data available." : "";
+    const attentionText = needsAttention
+      ? `${needsAttention.subject}: ${needsAttention.average === null ? "No data" : `${needsAttention.average.toFixed(1)}%`}`
+      : attentionSubjects.length === 0 ? "No subject data available." : "";
+
+    if (strongestText) {
+      page.drawText(safeText(strongestText).slice(0, 48), {
+        x: leftColumnX,
+        y,
+        size: 9,
+        font: regular,
+        maxWidth: columnWidth,
+      });
+    }
+    if (attentionText) {
+      page.drawText(safeText(attentionText).slice(0, 48), {
+        x: rightColumnX,
+        y,
+        size: 9,
+        font: regular,
+        maxWidth: columnWidth,
+      });
+    }
+    y -= 17;
+  }
+
+  const bytes = await pdf.save();
+  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  const filename = `GradeFlow-${analytics.academicYear.name.replace(/[^a-z0-9-]/gi, "-")}-analysis.pdf`;
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
 /* =========================================================
    TREND BADGE
 ========================================================= */
@@ -584,13 +887,42 @@ export default function AdminAnalyticsPage() {
   const [error, setError] =
     useState("");
 
-  const [
-    selectedSection,
-    setSelectedSection,
-  ] =
-    useState<SectionPerformance | null>(
-      null
-    );
+      /* =======================================================
+     ANALYTICS FILTERS
+  ======================================================= */
+
+          const [
+            selectedAcademicYearId,
+            setSelectedAcademicYearId,
+          ] = useState("");
+
+          const [
+            selectedTermId,
+            setSelectedTermId,
+          ] = useState("");
+
+          const [
+            selectedClassroomId,
+            setSelectedClassroomId,
+          ] = useState("");
+
+          const [
+            filtersInitialized,
+            setFiltersInitialized,
+          ] = useState(false);
+
+          const [
+            generatingAnalysis,
+            setGeneratingAnalysis,
+          ] = useState(false);
+
+          const [
+            selectedSection,
+            setSelectedSection,
+          ] =
+            useState<SectionPerformance | null>(
+              null
+            );
 
   const [
     selectedClass,
@@ -623,59 +955,262 @@ export default function AdminAnalyticsPage() {
     setDownloadingClass,
   ] = useState(false);
 
-  /* =======================================================
+    const [showAnalysisModal, setShowAnalysisModal] =
+    useState(false);
+
+  const [downloadingAnalysisPdf, setDownloadingAnalysisPdf] =
+    useState(false);
+
+    /* =======================================================
      LOAD ANALYTICS
   ======================================================= */
 
-  const loadAnalytics =
-    useCallback(async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response =
-          await fetch(
-            "/api/admin/analytics",
-            {
-              cache: "no-store",
+        const loadAnalytics = useCallback(
+          async (
+            filters?: {
+              academicYearId?: string;
+              termId?: string;
+              classroomId?: string;
             }
-          );
+          ): Promise<AnalyticsData | null> => {
+            try {
+              setLoading(true);
+              setError("");
 
-        const payload =
-          await response
-            .json()
-            .catch(() => ({}));
+              const params = new URLSearchParams();
 
-        if (!response.ok) {
-          throw new Error(
-            payload.error ??
-              payload.message ??
-              "Failed to load analytics."
-          );
-        }
+              if (filters?.academicYearId) {
+                params.set(
+                  "academicYearId",
+                  filters.academicYearId
+                );
+              }
 
-        setData(
-          payload as AnalyticsData
+              if (filters?.termId) {
+                params.set(
+                  "termId",
+                  filters.termId
+                );
+              }
+
+              if (filters?.classroomId) {
+                params.set(
+                  "classroomId",
+                  filters.classroomId
+                );
+              }
+
+              const queryString =
+                params.toString();
+
+              const url =
+                queryString.length > 0
+                  ? `/api/admin/analytics?${queryString}`
+                  : "/api/admin/analytics";
+
+              const response =
+                await fetch(url, {
+                  cache: "no-store",
+                  credentials: "include",
+                });
+
+              const payload =
+                await response
+                  .json()
+                  .catch(() => ({}));
+
+              if (!response.ok) {
+                throw new Error(
+                  payload.error ??
+                    payload.message ??
+                    "Failed to load analytics."
+                );
+              }
+
+              const analytics =
+                payload as AnalyticsData;
+
+              setData(analytics);
+
+              /*
+              * Initialize filters from the API
+              * the first time the page loads.
+              */
+              if (!filtersInitialized) {
+                setSelectedAcademicYearId(
+                  analytics.academicYear.id
+                );
+
+                setSelectedTermId(
+                  analytics.filters.termId ?? ""
+                );
+
+                setSelectedClassroomId(
+                  analytics.filters.classroomId ?? ""
+                );
+
+                setFiltersInitialized(true);
+              }
+
+              return analytics;
+            } catch (error) {
+              console.error(
+                "ANALYTICS PAGE ERROR:",
+                error
+              );
+
+              setError(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to load analytics."
+              );
+              return null;
+            } finally {
+              setLoading(false);
+            }
+          },
+          [filtersInitialized]
         );
-      } catch (error) {
-        console.error(
-          "ANALYTICS PAGE ERROR:",
-          error
+
+        useEffect(() => {
+          loadAnalytics();
+        }, [loadAnalytics]);
+
+  /* =======================================================
+     GENERATE FILTERED ANALYSIS
+  ======================================================= */
+
+  async function generateAnalysis() {
+    if (!selectedAcademicYearId) {
+      alert(
+        "Please select an academic year."
+      );
+
+      return;
+    }
+
+    try {
+      setGeneratingAnalysis(true);
+      setError("");
+
+      const analytics = await loadAnalytics({
+        academicYearId:
+          selectedAcademicYearId,
+
+        termId:
+          selectedTermId || undefined,
+
+        classroomId:
+          selectedClassroomId || undefined,
+      });
+
+          if (!analytics) return;
+
+      /*
+       * Close open analysis windows when
+       * generating a completely new scope.
+       */
+      setSelectedSection(null);
+      setSelectedClass(null);
+      setClassViewSection(null);
+      setShowGeneralPerformance(false);
+      setShowAnalysisModal(true);
+    } catch (error) {
+      console.error(
+        "GENERATE ANALYSIS ERROR:",
+        error
+      );
+    } finally {
+      setGeneratingAnalysis(false);
+    }
+  }
+
+  /* =======================================================
+     HANDLE ACADEMIC YEAR CHANGE
+  ======================================================= */
+
+  async function handleAcademicYearChange(
+    academicYearId: string
+  ) {
+    setSelectedAcademicYearId(
+      academicYearId
+    );
+
+    /*
+     * Reset dependent filters.
+     */
+    setSelectedTermId("");
+    setSelectedClassroomId("");
+
+    if (!academicYearId) {
+      return;
+    }
+
+    try {
+      setGeneratingAnalysis(true);
+      setError("");
+
+      /*
+       * Fetch the selected academic year.
+       *
+       * This also gives us the terms and classes
+       * belonging to that academic year.
+       */
+      const response =
+        await fetch(
+          `/api/admin/analytics?academicYearId=${encodeURIComponent(
+            academicYearId
+          )}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          }
         );
 
-        setError(
-          error instanceof Error
-            ? error.message
-            : "Unable to load analytics."
+      const payload =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ??
+            payload.message ??
+            "Failed to load academic year data."
         );
-      } finally {
-        setLoading(false);
       }
-    }, []);
 
-  useEffect(() => {
-    loadAnalytics();
-  }, [loadAnalytics]);
+      const analytics =
+        payload as AnalyticsData;
+
+      setData(analytics);
+
+      /*
+       * Keep the selected year but reset
+       * term/class because they belong to
+       * the previous academic year.
+       */
+      setSelectedAcademicYearId(
+        analytics.academicYear.id
+      );
+
+      setSelectedTermId("");
+      setSelectedClassroomId("");
+    } catch (error) {
+      console.error(
+        "ACADEMIC YEAR CHANGE ERROR:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load the selected academic year."
+      );
+    } finally {
+      setGeneratingAnalysis(false);
+    }
+  }
 
   /*
    * IMPORTANT:
@@ -692,6 +1227,34 @@ export default function AdminAnalyticsPage() {
           .toLowerCase() !==
         "general"
     );
+
+  const analysisScope = data
+    ? [
+        data.academicYear.name,
+        data.filters.termId
+          ? data.terms.find((term) => term.id === data.filters.termId)?.name
+          : null,
+        data.filters.classroomId
+          ? data.classrooms.find((classroom) => classroom.id === data.filters.classroomId)?.name
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" / ")
+    : "";
+
+  async function handleAnalysisPdfDownload() {
+    if (!data) return;
+
+    try {
+      setDownloadingAnalysisPdf(true);
+      await downloadAnalysisPdf(data, analysisScope);
+    } catch (error) {
+      console.error("ANALYSIS PDF ERROR:", error);
+      alert(error instanceof Error ? error.message : "Unable to download the analysis PDF.");
+    } finally {
+      setDownloadingAnalysisPdf(false);
+    }
+  }
 
       const printAnalyticsReport = ({
         title,
@@ -1179,9 +1742,7 @@ export default function AdminAnalyticsPage() {
 
                   <button
                     type="button"
-                    onClick={
-                      loadAnalytics
-                    }
+                    onClick={() => loadAnalytics()}
                     className="mt-4 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                   >
                     Try again
@@ -1248,6 +1809,252 @@ export default function AdminAnalyticsPage() {
               </span>
             </div>
           </div>
+
+                      {/* =================================================
+              ANALYTICS FILTERS
+          ================================================= */}
+
+          <section className="mb-8">
+            <div className="overflow-hidden rounded-3xl border border-purple-200 bg-white shadow-sm dark:border-purple-900/60 dark:bg-gray-900">
+
+              {/* Filter Header */}
+
+              <div className="border-b border-gray-100 bg-gradient-to-r from-purple-50 to-indigo-50 p-6 dark:border-gray-800 dark:from-purple-950/30 dark:to-indigo-950/20 sm:p-7">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-700 text-white shadow-sm">
+                      <Filter size={21} />
+                    </div>
+
+                    <div>
+                      <h2 className="text-lg font-bold">
+                        Performance Analysis Filters
+                      </h2>
+
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Select the academic year, term and class you want to analyze.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-gray-600 shadow-sm dark:bg-gray-900 dark:text-gray-300">
+                    {selectedClassroomId
+                      ? "Class Analysis"
+                      : selectedTermId
+                        ? "Term Analysis"
+                        : "Academic Year Analysis"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters */}
+
+              <div className="p-6 sm:p-7">
+
+                <div className="grid gap-5 lg:grid-cols-3">
+
+                  {/* Academic Year */}
+
+                  <div>
+                    <label
+                      htmlFor="analytics-academic-year"
+                      className="mb-2 block text-sm font-semibold"
+                    >
+                      Academic Year
+                    </label>
+
+                    <select
+                      id="analytics-academic-year"
+                      value={
+                        selectedAcademicYearId
+                      }
+                      onChange={(event) =>
+                        handleAcademicYearChange(
+                          event.target.value
+                        )
+                      }
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950"
+                    >
+                      {data.academicYears.map(
+                        (year) => (
+                          <option
+                            key={year.id}
+                            value={year.id}
+                          >
+                            {year.name}
+                            {year.isActive
+                              ? " — Active"
+                              : ""}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </div>
+
+                  {/* Term */}
+
+                  <div>
+                    <label
+                      htmlFor="analytics-term"
+                      className="mb-2 block text-sm font-semibold"
+                    >
+                      Term
+                    </label>
+
+                    <select
+                      id="analytics-term"
+                      value={
+                        selectedTermId
+                      }
+                      onChange={(event) =>
+                        setSelectedTermId(
+                          event.target.value
+                        )
+                      }
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950"
+                    >
+                      <option value="">
+                        All Terms
+                      </option>
+
+                      {data.terms
+                        .filter(
+                          (term) =>
+                            term.academicYearId ===
+                            selectedAcademicYearId
+                        )
+                        .map((term) => (
+                          <option
+                            key={term.id}
+                            value={term.id}
+                          >
+                            {term.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Class */}
+
+                  <div>
+                    <label
+                      htmlFor="analytics-class"
+                      className="mb-2 block text-sm font-semibold"
+                    >
+                      Class
+                    </label>
+
+                    <select
+                      id="analytics-class"
+                      value={
+                        selectedClassroomId
+                      }
+                      onChange={(event) =>
+                        setSelectedClassroomId(
+                          event.target.value
+                        )
+                      }
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 dark:border-gray-700 dark:bg-gray-950"
+                    >
+                      <option value="">
+                        All Classes
+                      </option>
+
+                      {data.classrooms.map(
+                        (classroom) => (
+                          <option
+                            key={classroom.id}
+                            value={classroom.id}
+                          >
+                            {classroom.name}
+                            {classroom.section
+                              ? ` — ${classroom.section}`
+                              : ""}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Selected Scope */}
+
+                <div className="mt-6 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-800/40">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                        Selected Analysis Scope
+                      </p>
+
+                      <p className="mt-1 font-semibold">
+                        {data.academicYear.name}
+
+                        {selectedTermId && (
+                          <>
+                            {" "}
+                            •{" "}
+                            {data.terms.find(
+                              (term) =>
+                                term.id ===
+                                selectedTermId
+                            )?.name ??
+                              "Selected Term"}
+                          </>
+                        )}
+
+                        {selectedClassroomId && (
+                          <>
+                            {" "}
+                            •{" "}
+                            {data.classrooms.find(
+                              (classroom) =>
+                                classroom.id ===
+                                selectedClassroomId
+                            )?.name ??
+                              "Selected Class"}
+                          </>
+                        )}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={
+                        generateAnalysis
+                      }
+                      disabled={
+                        generatingAnalysis ||
+                        !selectedAcademicYearId
+                      }
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {generatingAnalysis ? (
+                        <>
+                          <RefreshCw
+                            size={17}
+                            className="animate-spin"
+                          />
+
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <BarChart3
+                            size={17}
+                          />
+
+                          Generate Analysis
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
 
           {/* =================================================
               GENERAL PERFORMANCE RECTANGLE
@@ -1461,6 +2268,264 @@ export default function AdminAnalyticsPage() {
               </div>
             </div>
           </section>
+
+                    {/* =================================================
+              PERFORMANCE DISTRIBUTION
+          ================================================= */}
+
+          <section className="mb-10">
+            <div className="mb-5">
+              <h2 className="text-xl font-bold">
+                Performance Distribution
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Distribution of recorded marks for the selected analysis scope.
+              </p>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+
+              {/* Distribution chart */}
+
+              <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">
+                      Mark Distribution
+                    </h3>
+
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {data.performanceDistribution.total} recorded marks
+                    </p>
+                  </div>
+
+                  <BarChart3
+                    size={20}
+                    className="text-purple-600"
+                  />
+                </div>
+
+                <div className="mt-7 space-y-5">
+                  <PerformanceBar
+                    label="Excellent"
+                    range="80–100"
+                    value={
+                      data
+                        .performanceDistribution
+                        .excellent
+                    }
+                    total={
+                      data
+                        .performanceDistribution
+                        .total
+                    }
+                  />
+
+                  <PerformanceBar
+                    label="Very Good"
+                    range="70–79"
+                    value={
+                      data
+                        .performanceDistribution
+                        .veryGood
+                    }
+                    total={
+                      data
+                        .performanceDistribution
+                        .total
+                    }
+                  />
+
+                  <PerformanceBar
+                    label="Good"
+                    range="60–69"
+                    value={
+                      data
+                        .performanceDistribution
+                        .good
+                    }
+                    total={
+                      data
+                        .performanceDistribution
+                        .total
+                    }
+                  />
+
+                  <PerformanceBar
+                    label="Pass"
+                    range="50–59"
+                    value={
+                      data
+                        .performanceDistribution
+                        .pass
+                    }
+                    total={
+                      data
+                        .performanceDistribution
+                        .total
+                    }
+                  />
+
+                  <PerformanceBar
+                    label="Fail"
+                    range="0–49"
+                    value={
+                      data
+                        .performanceDistribution
+                        .fail
+                    }
+                    total={
+                      data
+                        .performanceDistribution
+                        .total
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* AI Analysis summary */}
+
+              <div className="rounded-3xl border border-purple-200 bg-purple-50 p-6 shadow-sm dark:border-purple-900/60 dark:bg-purple-950/20">
+
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-700 text-white">
+                    <Sparkles size={20} />
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold">
+                      AI Performance Analysis
+                    </h3>
+
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                      Structured performance data prepared for GradeFlow's AI assistant.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 sm:grid-cols-2">
+
+                  <div className="rounded-2xl border border-green-200 bg-white p-4 dark:border-green-900 dark:bg-gray-900">
+                    <p className="text-xs font-bold uppercase tracking-wider text-green-600 dark:text-green-400">
+                      Strongest Subjects
+                    </p>
+
+                    <div className="mt-3 space-y-2">
+                      {data.aiAnalysisData.strongestSubjects
+                        .slice(0, 3)
+                        .map((subject) => (
+                          <div
+                            key={
+                              subject.subjectId
+                            }
+                            className="flex items-center justify-between gap-3"
+                          >
+                            <span className="truncate text-sm font-semibold">
+                              {
+                                subject.subject
+                              }
+                            </span>
+
+                            <span className="shrink-0 text-sm font-bold text-green-700 dark:text-green-300">
+                              {formatPercent(
+                                subject.average
+                              )}
+                            </span>
+                          </div>
+                        ))}
+
+                      {data.aiAnalysisData
+                        .strongestSubjects
+                        .length === 0 && (
+                        <p className="text-sm text-gray-500">
+                          No subject data available.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-orange-200 bg-white p-4 dark:border-orange-900 dark:bg-gray-900">
+                    <p className="text-xs font-bold uppercase tracking-wider text-orange-600 dark:text-orange-400">
+                      Subjects Requiring Attention
+                    </p>
+
+                    <div className="mt-3 space-y-2">
+                      {data.aiAnalysisData.weakestSubjects
+                        .slice(0, 3)
+                        .map((subject) => (
+                          <div
+                            key={
+                              subject.subjectId
+                            }
+                            className="flex items-center justify-between gap-3"
+                          >
+                            <span className="truncate text-sm font-semibold">
+                              {
+                                subject.subject
+                              }
+                            </span>
+
+                            <span className="shrink-0 text-sm font-bold text-orange-700 dark:text-orange-300">
+                              {formatPercent(
+                                subject.average
+                              )}
+                            </span>
+                          </div>
+                        ))}
+
+                      {data.aiAnalysisData
+                        .weakestSubjects
+                        .length === 0 && (
+                        <p className="text-sm text-gray-500">
+                          No subject data available.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="mt-5 rounded-2xl bg-white p-4 dark:bg-gray-900">
+                  <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                    Analysis Scope
+                  </p>
+
+                  <p className="mt-2 font-semibold">
+                    {selectedClassroomId
+                      ? "Selected Class"
+                      : selectedTermId
+                        ? "Selected Term"
+                        : "Selected Academic Year"}
+                  </p>
+
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {data.academicYear.name}
+
+                    {selectedTermId &&
+                      ` • ${
+                        data.terms.find(
+                          (term) =>
+                            term.id ===
+                            selectedTermId
+                        )?.name ?? ""
+                      }`}
+
+                    {selectedClassroomId &&
+                      ` • ${
+                        data.classrooms.find(
+                          (classroom) =>
+                            classroom.id ===
+                            selectedClassroomId
+                        )?.name ?? ""
+                      }`}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
 
           {/* =================================================
               SCHOOL OVERVIEW
@@ -1752,6 +2817,164 @@ export default function AdminAnalyticsPage() {
           </section>
         </main>
 
+        {showAnalysisModal && data && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setShowAnalysisModal(false);
+              }
+            }}
+          >
+            <section
+              aria-labelledby="analysis-modal-title"
+              aria-modal="true"
+              className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+              role="dialog"
+            >
+              <header className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 sm:px-7 dark:border-gray-800">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wider text-teal-700 dark:text-teal-300">
+                    Generated analysis
+                  </p>
+                  <h2 id="analysis-modal-title" className="mt-1 text-xl font-bold sm:text-2xl">
+                    Performance overview
+                  </h2>
+                  <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+                    {analysisScope}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAnalysisPdfDownload}
+                    disabled={downloadingAnalysisPdf}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-wait disabled:opacity-60 sm:px-4"
+                  >
+                    {downloadingAnalysisPdf ? (
+                      <RefreshCw size={16} className="animate-spin" />
+                    ) : (
+                      <Download size={16} />
+                    )}
+                    <span className="hidden sm:inline">
+                      {downloadingAnalysisPdf ? "Preparing PDF..." : "Download PDF"}
+                    </span>
+                    <span className="sm:hidden">PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Close analysis"
+                    onClick={() => setShowAnalysisModal(false)}
+                    className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </header>
+
+              <div className="overflow-y-auto p-5 sm:p-7">
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                  <MiniStatCard label="Students" value={data.summary.students} />
+                  <MiniStatCard label="Classes" value={data.summary.classes} />
+                  <MiniStatCard label="School average" value={formatPercent(data.summary.average)} />
+                  <MiniStatCard label="Marks recorded" value={data.summary.marksRecorded} />
+                  <MiniStatCard label="Attendance records" value={data.summary.attendanceRecords} />
+                </div>
+
+                <div className="mt-6 grid gap-5 md:grid-cols-2">
+                  <section className="rounded-xl border border-green-200 bg-green-50/70 p-5 dark:border-green-900 dark:bg-green-950/20">
+                    <h3 className="text-sm font-bold text-green-800 dark:text-green-300">Strongest subjects</h3>
+                    <div className="mt-3 space-y-3">
+                      {data.aiAnalysisData.strongestSubjects.slice(0, 5).map((subject) => (
+                        <div key={subject.subjectId} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="truncate font-medium">{subject.subject}</span>
+                          <span className="shrink-0 font-bold text-green-800 dark:text-green-300">{formatPercent(subject.average)}</span>
+                        </div>
+                      ))}
+                      {data.aiAnalysisData.strongestSubjects.length === 0 && (
+                        <p className="text-sm text-gray-500">No subject data available.</p>
+                      )}
+                    </div>
+                  </section>
+                  <section className="rounded-xl border border-orange-200 bg-orange-50/70 p-5 dark:border-orange-900 dark:bg-orange-950/20">
+                    <h3 className="text-sm font-bold text-orange-800 dark:text-orange-300">Subjects requiring attention</h3>
+                    <div className="mt-3 space-y-3">
+                      {data.aiAnalysisData.weakestSubjects.slice(0, 5).map((subject) => (
+                        <div key={subject.subjectId} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="truncate font-medium">{subject.subject}</span>
+                          <span className="shrink-0 font-bold text-orange-800 dark:text-orange-300">{formatPercent(subject.average)}</span>
+                        </div>
+                      ))}
+                      {data.aiAnalysisData.weakestSubjects.length === 0 && (
+                        <p className="text-sm text-gray-500">No subject data available.</p>
+                      )}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                  <section className="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+                    <div className="mb-5 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-bold">Mark distribution</h3>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {data.performanceDistribution.total} marks in this scope
+                        </p>
+                      </div>
+                      <BarChart3 size={19} className="text-teal-700 dark:text-teal-300" />
+                    </div>
+                    <div className="space-y-4">
+                      <PerformanceBar label="Excellent" range="80-100" value={data.performanceDistribution.excellent} total={data.performanceDistribution.total} />
+                      <PerformanceBar label="Very Good" range="70-79" value={data.performanceDistribution.veryGood} total={data.performanceDistribution.total} />
+                      <PerformanceBar label="Good" range="60-69" value={data.performanceDistribution.good} total={data.performanceDistribution.total} />
+                      <PerformanceBar label="Pass" range="50-59" value={data.performanceDistribution.pass} total={data.performanceDistribution.total} />
+                      <PerformanceBar label="Fail" range="0-49" value={data.performanceDistribution.fail} total={data.performanceDistribution.total} />
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+                    <div className="mb-5 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-bold">Class averages</h3>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          Highest averages in the selected scope
+                        </p>
+                      </div>
+                      <Users size={19} className="text-blue-700 dark:text-blue-300" />
+                    </div>
+                    <div className="space-y-4">
+                      {[...data.classes]
+                        .sort((left, right) => (right.average ?? -1) - (left.average ?? -1))
+                        .slice(0, 6)
+                        .map((classItem) => {
+                          const average = classItem.average ?? 0;
+                          return (
+                            <div key={classItem.classroomId}>
+                              <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                                <span className="truncate font-medium">{classItem.class}</span>
+                                <span className="shrink-0 font-bold">{formatPercent(classItem.average)}</span>
+                              </div>
+                              <div className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                                <div
+                                  className="h-full rounded-full bg-blue-600"
+                                  style={{ width: `${Math.max(0, Math.min(100, average))}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      {data.classes.length === 0 && (
+                        <p className="text-sm text-gray-500">No class averages available.</p>
+                      )}
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
         {/* ===================================================
             GENERAL PERFORMANCE MODAL
         =================================================== */}
@@ -1844,6 +3067,8 @@ export default function AdminAnalyticsPage() {
                     }
                   />
                 </div>
+
+                
 
                 {/* School performance highlights */}
 
@@ -3498,6 +4723,66 @@ function MiniStatCard({
     </div>
   );
 }
+
+/* =========================================================
+   PERFORMANCE BAR
+========================================================= */
+
+function PerformanceBar({
+  label,
+  range,
+  value,
+  total,
+}: {
+  label: string;
+  range: string;
+  value: number;
+  total: number;
+}) {
+  const percentage =
+    total > 0
+      ? Math.min(
+          100,
+          (value / total) * 100
+        )
+      : 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">
+            {label}
+          </p>
+
+          <p className="text-xs text-gray-400">
+            {range}
+          </p>
+        </div>
+
+        <div className="text-right">
+          <p className="text-sm font-bold">
+            {value}
+          </p>
+
+          <p className="text-xs text-gray-400">
+            {percentage.toFixed(1)}%
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+        <div
+          className="h-full rounded-full bg-purple-600 transition-all duration-500"
+          style={{
+            width: `${percentage}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 
 /* =========================================================
    EMPTY STATE

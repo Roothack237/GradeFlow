@@ -10,9 +10,11 @@ import {
   Calendar,
   ChevronDown,
   ClipboardList,
+  Download,
   Loader2,
   Trophy,
 } from "lucide-react";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import Sidebar from "@/components/parent/SideBar";
 import Navbar from "@/components/parent/NavBar";
@@ -87,6 +89,204 @@ type ResultsData = {
   };
 };
 
+async function downloadChildResultsPdf(data: ResultsData) {
+  const pdf = await PDFDocument.create();
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 42;
+  const purple = rgb(0.4, 0.22, 0.62);
+  let page = pdf.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+
+  const safeText = (value: unknown) =>
+    String(value ?? "—").replace(/[^\x20-\x7E]/g, "?");
+
+  const addPage = () => {
+    page = pdf.addPage([pageWidth, pageHeight]);
+    y = pageHeight - margin;
+    page.drawText("GradeFlow | Published Academic Results", {
+      x: margin,
+      y,
+      size: 9,
+      font: bold,
+      color: purple,
+    });
+    y -= 17;
+    page.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 1.5,
+      color: purple,
+    });
+    y -= 20;
+  };
+
+  const ensureSpace = (height: number) => {
+    if (y - height < margin) addPage();
+  };
+
+  const drawParagraph = (
+    value: unknown,
+    options: { size?: number; font?: typeof regular; color?: typeof purple; indent?: number } = {}
+  ) => {
+    const size = options.size ?? 9;
+    const font = options.font ?? regular;
+    const indent = options.indent ?? 0;
+    const maxWidth = pageWidth - margin * 2 - indent;
+    const words = safeText(value).split(/\s+/);
+    let line = "";
+
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        ensureSpace(size + 5);
+        page.drawText(line, {
+          x: margin + indent,
+          y,
+          size,
+          font,
+          color: options.color ?? rgb(0.15, 0.17, 0.2),
+        });
+        y -= size + 5;
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+
+    if (line) {
+      ensureSpace(size + 5);
+      page.drawText(line, {
+        x: margin + indent,
+        y,
+        size,
+        font,
+        color: options.color ?? rgb(0.15, 0.17, 0.2),
+      });
+      y -= size + 5;
+    }
+  };
+
+  const drawSectionHeading = (title: string) => {
+    ensureSpace(40);
+    y -= 4;
+    page.drawText(safeText(title), {
+      x: margin,
+      y,
+      size: 13,
+      font: bold,
+      color: purple,
+    });
+    y -= 18;
+    page.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 1.25,
+      color: purple,
+    });
+    y -= 13;
+  };
+
+  page.drawText("GRADE FLOW", {
+    x: margin,
+    y,
+    size: 10,
+    font: bold,
+    color: purple,
+  });
+  y -= 23;
+  page.drawText("Academic Results", {
+    x: margin,
+    y,
+    size: 22,
+    font: bold,
+    color: rgb(0.12, 0.14, 0.18),
+  });
+  y -= 27;
+  drawParagraph(data.student.name, { size: 14, font: bold });
+  drawParagraph(
+    `Matricule: ${data.student.matricule} | Class: ${data.student.class ?? "—"} | Section: ${data.student.section ?? "—"}`,
+    { size: 9 }
+  );
+  drawParagraph(`Grading scale: ${data.scale.maxMark} | Pass mark: ${data.scale.passMark}`, {
+    size: 9,
+  });
+  drawParagraph(`Generated: ${new Date().toLocaleDateString()}`, {
+    size: 9,
+    color: rgb(0.4, 0.42, 0.45),
+  });
+  y -= 4;
+  page.drawLine({
+    start: { x: margin, y },
+    end: { x: pageWidth - margin, y },
+    thickness: 2,
+    color: purple,
+  });
+  y -= 14;
+
+  if (data.terms.length === 0) {
+    drawParagraph("No published results are currently available for this child.");
+  }
+
+  for (const term of data.terms) {
+    drawSectionHeading(`${term.name} | ${term.academicYear}`);
+
+    for (const sequence of term.sequences) {
+      ensureSpace(42);
+      drawParagraph(sequence.name, { size: 11, font: bold });
+      drawParagraph(
+        `Average: ${sequence.average === null ? "—" : `${sequence.average}/${data.scale.maxMark}`} | Class rank: ${sequence.rank ?? "—"} | Published: ${sequence.publication.publishedAt ? new Date(sequence.publication.publishedAt).toLocaleDateString() : "—"}`,
+        { size: 9 }
+      );
+
+      if (sequence.subjects.length === 0) {
+        drawParagraph("No published subject marks for this sequence.", { indent: 8 });
+      }
+
+      for (const subject of sequence.subjects) {
+        ensureSpace(36);
+        drawParagraph(
+          `${subject.subject} | ${subject.score}/${data.scale.maxMark} | Grade ${subject.grade} | Coefficient ${subject.coefficient}`,
+          { font: bold, indent: 8 }
+        );
+        drawParagraph(`Teacher: ${subject.teacher} | Remark: ${subject.remark ?? "—"}`, {
+          size: 8,
+          indent: 8,
+          color: rgb(0.38, 0.4, 0.44),
+        });
+      }
+      y -= 7;
+    }
+  }
+
+  if (data.reportCards.length > 0) {
+    drawSectionHeading("Published Term Summaries");
+    for (const card of data.reportCards) {
+      drawParagraph(
+        `${card.term} | Average: ${card.average}/${data.scale.maxMark} | Position: ${card.position ?? "—"} | Decision: ${card.decision ?? "—"}`,
+        { font: bold }
+      );
+      if (card.principalRemark) {
+        drawParagraph(`Principal remark: ${card.principalRemark}`, { indent: 8 });
+      }
+    }
+  }
+
+  const bytes = await pdf.save();
+  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const safeName = data.student.name.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+  link.href = url;
+  link.download = `gradeflow-${safeName}-results.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function ParentResultsPage() {
   const [sidebarOpen, setSidebarOpen] =
     useState(false);
@@ -98,6 +298,9 @@ export default function ParentResultsPage() {
     useState<ResultsData | null>(null);
 
   const [loading, setLoading] =
+    useState(false);
+
+  const [downloadingPdf, setDownloadingPdf] =
     useState(false);
 
   const [error, setError] =
@@ -210,6 +413,20 @@ export default function ParentResultsPage() {
       }
     );
   };
+
+  async function downloadResults() {
+    if (!data || data.terms.length === 0) return;
+
+    try {
+      setDownloadingPdf(true);
+      await downloadChildResultsPdf(data);
+    } catch (downloadError) {
+      console.error("PARENT RESULTS PDF ERROR:", downloadError);
+      setError("Unable to generate the results PDF. Please try again.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -332,15 +549,31 @@ export default function ParentResultsPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-xl bg-purple-50 px-4 py-3 text-center dark:bg-purple-950/30">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-purple-500">
-                          Pass mark
-                        </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={downloadResults}
+                          disabled={downloadingPdf || data.terms.length === 0}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {downloadingPdf ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Download size={16} />
+                          )}
+                          {downloadingPdf ? "Preparing PDF..." : "Download results PDF"}
+                        </button>
 
-                        <p className="mt-0.5 text-lg font-bold text-purple-700 dark:text-purple-300">
-                          {data.scale.passMark}/
-                          {data.scale.maxMark}
-                        </p>
+                        <div className="rounded-xl bg-purple-50 px-4 py-3 text-center dark:bg-purple-950/30">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-purple-500">
+                            Pass mark
+                          </p>
+
+                          <p className="mt-0.5 text-lg font-bold text-purple-700 dark:text-purple-300">
+                            {data.scale.passMark}/
+                            {data.scale.maxMark}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>

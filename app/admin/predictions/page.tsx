@@ -12,6 +12,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import AdminShell from "@/components/admin/AdminShell";
 import {
@@ -97,6 +98,234 @@ type PredictionsPayload = {
   message?: string;
 };
 
+type Recommendation = {
+  title: string;
+  action: string;
+  evidence: string;
+  icon: "risk" | "subject" | "class" | "attendance" | "trend" | "monitor";
+  tone: "red" | "amber" | "blue" | "emerald" | "gray";
+};
+
+async function downloadPredictionsPdf(
+  data: PredictionsPayload,
+  scopeLabel: string,
+  recommendations: Recommendation[]
+) {
+  const pdf = await PDFDocument.create();
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 42;
+  const contentWidth = pageWidth - margin * 2;
+  const purple = rgb(0.38, 0.22, 0.61);
+  let page = pdf.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+
+  const cleanText = (value: unknown) =>
+    String(value ?? "—").replace(/[^\x20-\x7E]/g, "?");
+
+  const addPage = () => {
+    page = pdf.addPage([pageWidth, pageHeight]);
+    y = pageHeight - margin;
+    page.drawText("GradeFlow | Predictions & Analytics", {
+      x: margin,
+      y,
+      size: 9,
+      font: bold,
+      color: purple,
+    });
+    y -= 16;
+    page.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 1.5,
+      color: purple,
+    });
+    y -= 20;
+  };
+
+  const ensureSpace = (height: number) => {
+    if (y - height < margin) addPage();
+  };
+
+  const drawParagraph = (
+    value: unknown,
+    options: { size?: number; font?: typeof regular; color?: typeof purple; indent?: number } = {}
+  ) => {
+    const size = options.size ?? 9;
+    const font = options.font ?? regular;
+    const indent = options.indent ?? 0;
+    const maxWidth = contentWidth - indent;
+    const words = cleanText(value).split(/\s+/);
+    let line = "";
+
+    for (const word of words) {
+      const nextLine = line ? `${line} ${word}` : word;
+      if (line && font.widthOfTextAtSize(nextLine, size) > maxWidth) {
+        ensureSpace(size + 5);
+        page.drawText(line, {
+          x: margin + indent,
+          y,
+          size,
+          font,
+          color: options.color ?? rgb(0.16, 0.18, 0.22),
+        });
+        y -= size + 5;
+        line = word;
+      } else {
+        line = nextLine;
+      }
+    }
+
+    if (line) {
+      ensureSpace(size + 5);
+      page.drawText(line, {
+        x: margin + indent,
+        y,
+        size,
+        font,
+        color: options.color ?? rgb(0.16, 0.18, 0.22),
+      });
+      y -= size + 5;
+    }
+  };
+
+  const drawSectionHeading = (title: string) => {
+    ensureSpace(38);
+    y -= 4;
+    page.drawText(cleanText(title), {
+      x: margin,
+      y,
+      size: 13,
+      font: bold,
+      color: purple,
+    });
+    y -= 17;
+    page.drawLine({
+      start: { x: margin, y },
+      end: { x: pageWidth - margin, y },
+      thickness: 1.25,
+      color: purple,
+    });
+    y -= 13;
+  };
+
+  page.drawText("GRADE FLOW", {
+    x: margin,
+    y,
+    size: 10,
+    font: bold,
+    color: purple,
+  });
+  y -= 23;
+  page.drawText("Predictions & Recommendations", {
+    x: margin,
+    y,
+    size: 21,
+    font: bold,
+    color: rgb(0.12, 0.14, 0.19),
+  });
+  y -= 22;
+  drawParagraph(`Scope: ${scopeLabel}`, { size: 11, font: bold });
+  drawParagraph(
+    `Term: ${data.term?.name ?? "Not available"} | Academic year: ${data.term?.academicYear.name ?? "Not available"}`,
+    { size: 9, color: rgb(0.38, 0.4, 0.44) }
+  );
+  drawParagraph(`Generated: ${new Date().toLocaleDateString()}`, {
+    size: 9,
+    color: rgb(0.38, 0.4, 0.44),
+  });
+  y -= 4;
+  page.drawLine({
+    start: { x: margin, y },
+    end: { x: pageWidth - margin, y },
+    thickness: 2,
+    color: purple,
+  });
+  y -= 14;
+
+  drawSectionHeading("Prediction Summary");
+  drawParagraph(`Students in scope: ${data.summary.students}`);
+  drawParagraph(`Students analysed: ${data.summary.analysed}`);
+  drawParagraph(`Students at risk: ${data.summary.atRisk} (${data.summary.highRisk} high risk)`);
+  drawParagraph(
+    `Predicted pass rate: ${data.summary.predictedPassRate === null ? "Not available" : `${data.summary.predictedPassRate}%`}`
+  );
+  drawParagraph(`Current average: ${data.summary.average === null ? "Not available" : `${data.summary.average}/20`}`);
+  drawParagraph(`Improving: ${data.summary.improving} | Declining: ${data.summary.declining}`);
+
+  drawSectionHeading("Recommendations");
+  if (recommendations.length === 0) {
+    drawParagraph("No recommendations are available for this scope.");
+  }
+  for (const recommendation of recommendations) {
+    drawParagraph(recommendation.title, { font: bold, color: purple });
+    drawParagraph(recommendation.action, { indent: 10 });
+    drawParagraph(`Evidence: ${recommendation.evidence}`, {
+      size: 8,
+      indent: 10,
+      color: rgb(0.38, 0.4, 0.44),
+    });
+    y -= 5;
+  }
+
+  drawSectionHeading("Class Projections");
+  if (data.classes.length === 0) {
+    drawParagraph("No class projection data is available.");
+  }
+  for (const classroom of data.classes) {
+    drawParagraph(
+      `${classroom.name} | Predicted pass probability: ${classroom.predictedPassRate}% | At risk: ${classroom.atRisk} of ${classroom.students}`,
+      { font: bold }
+    );
+  }
+
+  drawSectionHeading("Subjects Needing Attention");
+  const subjects = data.subjects.filter((subject) => subject.atRisk > 0);
+  if (subjects.length === 0) {
+    drawParagraph("No recorded subject marks are currently below the pass mark.");
+  }
+  for (const subject of subjects) {
+    drawParagraph(
+      `${subject.name} | Average: ${subject.average ?? "Not available"}/20 | Below pass mark: ${subject.atRisk} of ${subject.marks} (${subject.atRiskRate}%)`
+    );
+  }
+
+  drawSectionHeading("Student Predictions");
+  const orderedStudents = [...data.students].sort((left, right) => {
+    const riskOrder: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2, UNKNOWN: 3 };
+    return (riskOrder[left.riskLevel] ?? 4) - (riskOrder[right.riskLevel] ?? 4);
+  });
+  for (const student of orderedStudents) {
+    drawParagraph(
+      `${student.name} (${student.matricule}) | ${student.className ?? "No class"} | Risk: ${student.riskLevel}`,
+      { font: bold }
+    );
+    drawParagraph(
+      `Current average: ${student.currentAverage === null ? "—" : `${student.currentAverage}/20`} | Projected: ${student.projectedAverage === null ? "—" : `${student.projectedAverage}/20`} | Pass probability: ${student.passProbability === null ? "—" : `${student.passProbability}%`}`,
+      { size: 8, indent: 10 }
+    );
+    drawParagraph(
+      `Attendance: ${student.attendanceRate === null ? "—" : `${student.attendanceRate}%`} | Trend: ${student.trend === null ? "—" : `${student.trend > 0 ? "+" : ""}${student.trend}`} | Strongest subject: ${student.strongestSubject ?? "—"} | Weakest subject: ${student.weakestSubject ?? "—"}`,
+      { size: 8, indent: 10 }
+    );
+    y -= 4;
+  }
+
+  const bytes = await pdf.save();
+  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const safeScope = scopeLabel.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+  link.href = url;
+  link.download = `gradeflow-predictions-${safeScope}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 const RISK_TONE: Record<string, "red" | "amber" | "green" | "gray"> = {
   HIGH: "red",
   MEDIUM: "amber",
@@ -115,12 +344,14 @@ export default function PredictionsPage() {
 
   const [termId, setTermId] = useState("");
   const [classroomId, setClassroomId] = useState("");
+  const [scopeMode, setScopeMode] = useState<"overall" | "class">("overall");
   const [riskFilter, setRiskFilter] = useState("");
   const [search, setSearch] = useState("");
 
   const [terms, setTerms] = useState<{ id: string; name: string }[]>([]);
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
   const [showMethod, setShowMethod] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   /* ---------------- lookups ---------------- */
 
@@ -169,6 +400,11 @@ export default function PredictionsPage() {
   /* ---------------- load predictions ---------------- */
 
   const load = useCallback(async () => {
+    if (scopeMode === "class" && !classroomId) {
+      setError("Choose a class to generate class-specific predictions.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
@@ -176,7 +412,9 @@ export default function PredictionsPage() {
       const params = new URLSearchParams();
 
       if (termId) params.set("termId", termId);
-      if (classroomId) params.set("classroomId", classroomId);
+      if (scopeMode === "class" && classroomId) {
+        params.set("classroomId", classroomId);
+      }
 
       const response = await fetch(`/api/admin/predictions?${params}`, {
         cache: "no-store",
@@ -190,7 +428,7 @@ export default function PredictionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [termId, classroomId]);
+  }, [termId, classroomId, scopeMode]);
 
   useEffect(() => {
     load();
@@ -211,6 +449,113 @@ export default function PredictionsPage() {
         .includes(term);
     });
   }, [data, riskFilter, search]);
+
+  const recommendations = useMemo<Recommendation[]>(() => {
+    if (!data) return [];
+
+    const items: Recommendation[] = [];
+    const highRiskStudents = data.students
+      .filter((student) => student.riskLevel === "HIGH")
+      .sort(
+        (left, right) =>
+          (left.passProbability ?? 0) - (right.passProbability ?? 0)
+      );
+
+    if (highRiskStudents.length > 0) {
+      const focusStudents = highRiskStudents.slice(0, 3);
+      const names = focusStudents
+        .map((student) => `${student.name}${student.className ? ` (${student.className})` : ""}`)
+        .join(", ");
+      items.push({
+        title: "Prioritize high-risk students",
+        action: `Arrange individual check-ins and targeted revision for ${names}${highRiskStudents.length > focusStudents.length ? ` and ${highRiskStudents.length - focusStudents.length} other student(s)` : ""}.`,
+        evidence: `${highRiskStudents.length} high-risk student(s)${data.summary.highRisk !== highRiskStudents.length ? ` in this class filter; ${data.summary.highRisk} across the selected term` : ""}`,
+        icon: "risk",
+        tone: "red",
+      });
+    }
+
+    const prioritySubjects = data.subjects
+      .filter((subject) => subject.atRisk > 0)
+      .slice(0, 2);
+
+    for (const subject of prioritySubjects) {
+      items.push({
+        title: `Review ${subject.name}`,
+        action: `Plan focused practice and check understanding in ${subject.name}.`,
+        evidence: `${subject.atRisk} of ${subject.marks} marks below the pass mark (${subject.atRiskRate}%); average ${subject.average ?? "not available"}/20`,
+        icon: "subject",
+        tone: subject.atRiskRate >= 40 ? "red" : "amber",
+      });
+    }
+
+    const classToSupport = data.classes.find(
+      (classroom) => classroom.students > 0 && classroom.predictedPassRate < 70
+    );
+    if (classToSupport) {
+      items.push({
+        title: `Plan class support for ${classToSupport.name}`,
+        action: "Review recent assessments with the class and schedule focused support for students flagged at risk.",
+        evidence: `${classToSupport.predictedPassRate}% predicted pass probability; ${classToSupport.atRisk} of ${classToSupport.students} student(s) flagged at risk`,
+        icon: "class",
+        tone: classToSupport.predictedPassRate < 50 ? "red" : "amber",
+      });
+    }
+
+    const attendanceConcerns = data.students
+      .filter(
+        (student) =>
+          student.attendanceRate !== null && student.attendanceRate < 75
+      )
+      .sort(
+        (left, right) =>
+          (left.attendanceRate ?? 100) - (right.attendanceRate ?? 100)
+      );
+    if (attendanceConcerns.length > 0) {
+      const student = attendanceConcerns[0];
+      items.push({
+        title: "Follow up on attendance",
+        action: `Check in with ${student.name}${student.className ? ` (${student.className})` : ""} and identify barriers to attendance.`,
+        evidence: `${attendanceConcerns.length} student(s) below 75% attendance; lowest recorded rate is ${student.attendanceRate}%`,
+        icon: "attendance",
+        tone: "amber",
+      });
+    }
+
+    const decliningStudents = data.students
+      .filter((student) => student.trend !== null && student.trend < -3)
+      .sort((left, right) => (left.trend ?? 0) - (right.trend ?? 0));
+    if (decliningStudents.length > 0) {
+      const student = decliningStudents[0];
+      items.push({
+        title: "Check recent performance declines",
+        action: `Meet with ${student.name}${student.className ? ` (${student.className})` : ""} to identify where performance is slipping and agree on a short follow-up plan.`,
+        evidence: `${decliningStudents.length} student(s) declined by more than 3 points between the latest recorded sequences; this student's trend is ${student.trend} points`,
+        icon: "trend",
+        tone: "blue",
+      });
+    }
+
+    if (items.length === 0 && data.summary.analysed > 0) {
+      items.push({
+        title: "Maintain current support and monitor progress",
+        action: "Continue the current learning support and review the next sequence results for changes in risk or performance.",
+        evidence: `${data.summary.analysed} student(s) analysed; ${data.summary.atRisk} currently flagged at risk; ${data.summary.improving} improving`,
+        icon: "monitor",
+        tone: "emerald",
+      });
+    } else if (items.length === 0) {
+      items.push({
+        title: "More recorded marks are needed",
+        action: "Record marks and attendance for this term before using performance recommendations.",
+        evidence: `${data.summary.students} student(s) in scope; ${data.summary.analysed} have enough recorded marks to analyse`,
+        icon: "monitor",
+        tone: "gray",
+      });
+    }
+
+    return items;
+  }, [data]);
 
   function exportCsv() {
     if (!data) return;
@@ -261,7 +606,26 @@ export default function PredictionsPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function exportPdf() {
+    if (!data) return;
+
+    try {
+      setDownloadingPdf(true);
+      await downloadPredictionsPdf(data, analysisScopeLabel, recommendations);
+    } catch (pdfError) {
+      console.error("PREDICTIONS PDF ERROR:", pdfError);
+      alert("Unable to generate the predictions PDF. Please try again.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   const activeFilters = (riskFilter ? 1 : 0) + (search ? 1 : 0);
+  const selectedClass = classes.find((classroom) => classroom.id === classroomId);
+  const analysisScopeLabel =
+    scopeMode === "class"
+      ? selectedClass?.name ?? "Selected class"
+      : "Overall classes";
 
   return (
     <AdminShell
@@ -272,11 +636,6 @@ export default function PredictionsPage() {
         title="Predictions & Analytics"
         subtitle="Every projection below is derived from recorded school data — nothing is simulated."
       >
-        <Button variant="secondary" onClick={load} loading={loading}>
-          <RefreshCw size={16} />
-          Recompute
-        </Button>
-
         <Button variant="secondary" onClick={exportCsv} disabled={!students.length}>
           <Download size={16} />
           Export CSV
@@ -325,6 +684,63 @@ export default function PredictionsPage() {
         />
       </div>
 
+      {data ? (
+        <Card
+          title={scopeMode === "class" ? `Recommendations: ${analysisScopeLabel}` : "Overall recommendations"}
+          description={`Suggested actions based on recorded marks, attendance and projections for ${analysisScopeLabel.toLowerCase()} in ${data.term?.name ?? "the selected term"}.`}
+          className="mb-6"
+        >
+          <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+            {recommendations.map((recommendation, index) => {
+              const toneClass =
+                recommendation.tone === "red"
+                  ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+                  : recommendation.tone === "amber"
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                    : recommendation.tone === "blue"
+                      ? "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
+                      : recommendation.tone === "emerald"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                        : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+
+              return (
+                <li
+                  key={`${recommendation.title}-${index}`}
+                  className="flex gap-3 py-4 first:pt-0 last:pb-0"
+                >
+                  <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${toneClass}`}>
+                    {recommendation.icon === "risk" ? (
+                      <ShieldAlert size={18} />
+                    ) : recommendation.icon === "subject" ? (
+                      <Brain size={18} />
+                    ) : recommendation.icon === "class" ? (
+                      <Users size={18} />
+                    ) : recommendation.icon === "attendance" ? (
+                      <Info size={18} />
+                    ) : recommendation.icon === "trend" ? (
+                      <TrendingDown size={18} />
+                    ) : (
+                      <RefreshCw size={18} />
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                      {recommendation.title}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                      {recommendation.action}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Evidence: {recommendation.evidence}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      ) : null}
+
       {showMethod && data?.methodology ? (
         <Card title={data.methodology.name} className="mb-6">
           <div className="space-y-3 text-sm text-gray-600 dark:text-gray-300">
@@ -372,6 +788,44 @@ export default function PredictionsPage() {
       ) : null}
 
       <Card bodyClassName="p-4" className="mb-5">
+        <div className="mb-4">
+          <Field label="Prediction scope">
+            <div className="inline-flex w-full rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-800 sm:w-auto">
+              <button
+                type="button"
+                aria-pressed={scopeMode === "overall"}
+                onClick={() => {
+                  setScopeMode("overall");
+                  setClassroomId("");
+                }}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition sm:flex-none ${
+                  scopeMode === "overall"
+                    ? "bg-white text-purple-700 shadow-sm dark:bg-gray-700 dark:text-purple-200"
+                    : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                }`}
+              >
+                Overall
+              </button>
+              <button
+                type="button"
+                aria-pressed={scopeMode === "class"}
+                disabled={classes.length === 0}
+                onClick={() => {
+                  setScopeMode("class");
+                  setClassroomId((current) => current || classes[0]?.id || "");
+                }}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none ${
+                  scopeMode === "class"
+                    ? "bg-white text-purple-700 shadow-sm dark:bg-gray-700 dark:text-purple-200"
+                    : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                }`}
+              >
+                Per class
+              </button>
+            </div>
+          </Field>
+        </div>
+
         <div className="grid gap-3 lg:grid-cols-4">
           <Field label="Term">
             <Select
@@ -386,19 +840,24 @@ export default function PredictionsPage() {
             </Select>
           </Field>
 
-          <Field label="Class">
-            <Select
-              value={classroomId}
-              onChange={(event) => setClassroomId(event.target.value)}
-            >
-              <option value="">All classes</option>
-              {classes.map((classroom) => (
-                <option key={classroom.id} value={classroom.id}>
-                  {classroom.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          {scopeMode === "class" ? (
+            <Field label="Class">
+              <Select
+                value={classroomId}
+                onChange={(event) => setClassroomId(event.target.value)}
+              >
+                {classes.map((classroom) => (
+                  <option key={classroom.id} value={classroom.id}>
+                    {classroom.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            <div className="flex items-end pb-2 text-sm text-gray-500 dark:text-gray-400">
+              Overall scope includes all classes.
+            </div>
+          )}
 
           <Field label="Risk level">
             <Select
@@ -431,6 +890,21 @@ export default function PredictionsPage() {
               ) : null}
             </div>
           </Field>
+        </div>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button variant="primary" onClick={load} loading={loading}>
+            <RefreshCw size={16} />
+            Generate {scopeMode === "class" ? "Class" : "Overall"} Predictions
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={exportPdf}
+            disabled={!data || loading || downloadingPdf}
+            loading={downloadingPdf}
+          >
+            <Download size={16} />
+            Download PDF
+          </Button>
         </div>
       </Card>
 

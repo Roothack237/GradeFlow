@@ -1,13 +1,13 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
 import {
-  ArrowLeft,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
-  Clock3,
   Loader2,
   Search,
   UserCheck,
@@ -15,7 +15,8 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useSearchParams, useRouter } from "next/navigation";
+
+import { useSearchParams } from "next/navigation";
 
 type Student = {
   id: string;
@@ -35,12 +36,6 @@ type Subject = {
 type Classroom = {
   id: string;
   name: string;
-};
-
-type Assignment = {
-  id: string;
-  subject: Subject;
-  classroom: Classroom;
 };
 
 type AttendanceStatus = "PRESENT" | "ABSENT" | "EXCUSED";
@@ -82,7 +77,6 @@ const STATUS_OPTIONS: {
 
 export default function TeacherAttendancePage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const classId = searchParams.get("classId");
 
@@ -91,14 +85,16 @@ export default function TeacherAttendancePage() {
   const [classroom, setClassroom] = useState<Classroom | null>(null);
 
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
+
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0]
   );
 
-  // IMPORTANT:
-  // These values must match the Prisma Attendance term enum.
   const [term, setTerm] = useState("FIRST_TERM");
 
+  // IMPORTANT:
+  // Attendance starts EMPTY.
+  // No student is automatically marked PRESENT.
   const [attendance, setAttendance] = useState<AttendanceMap>({});
 
   const [search, setSearch] = useState("");
@@ -127,7 +123,9 @@ export default function TeacherAttendancePage() {
         setSuccess("");
 
         const response = await fetch(
-          `/api/teacher/class-students?classId=${encodeURIComponent(classId)}`,
+          `/api/teacher/class-students?classId=${encodeURIComponent(
+            classId
+          )}`,
           {
             method: "GET",
             cache: "no-store",
@@ -136,15 +134,15 @@ export default function TeacherAttendancePage() {
 
         const data = await response.json();
 
-       if (!response.ok) {
-        console.error("ATTENDANCE API ERROR:", data);
+        if (!response.ok) {
+          console.error("ATTENDANCE API ERROR:", data);
 
-        throw new Error(
-          data?.error ||
-            data?.message ||
-            `Server error (${response.status})`
-        );
-      }
+          throw new Error(
+            data?.error ||
+              data?.message ||
+              `Server error (${response.status})`
+          );
+        }
 
         const loadedStudents: Student[] = Array.isArray(data.students)
           ? data.students
@@ -169,24 +167,20 @@ export default function TeacherAttendancePage() {
           });
         }
 
-        // Automatically select first assigned subject.
         if (loadedSubjects.length > 0) {
           setSelectedSubjectId(loadedSubjects[0].id);
         }
 
-        // Default every student to PRESENT.
-        const initialAttendance: AttendanceMap = {};
-
-        for (const student of loadedStudents) {
-          initialAttendance[student.id] = "PRESENT";
-        }
-
-        setAttendance(initialAttendance);
+        // IMPORTANT:
+        // Do NOT automatically mark students as PRESENT.
+        // Start with an empty attendance map.
+        setAttendance({});
       } catch (err: any) {
         console.error("LOAD ATTENDANCE PAGE ERROR:", err);
 
         setError(
-          err?.message || "Failed to load attendance information."
+          err?.message ||
+            "Failed to load attendance information."
         );
       } finally {
         setLoading(false);
@@ -214,7 +208,8 @@ export default function TeacherAttendancePage() {
       const reverseName =
         `${student.lastName} ${student.firstName}`.toLowerCase();
 
-      const matricule = student.matricule?.toLowerCase() || "";
+      const matricule =
+        student.matricule?.toLowerCase() || "";
 
       return (
         fullName.includes(query) ||
@@ -234,11 +229,22 @@ export default function TeacherAttendancePage() {
     let excused = 0;
 
     for (const student of students) {
-      const status = attendance[student.id] || "PRESENT";
+      // IMPORTANT:
+      // Do NOT use || "PRESENT" here.
+      // If the student has not been marked, their status is undefined.
+      const status = attendance[student.id];
 
-      if (status === "PRESENT") present++;
-      if (status === "ABSENT") absent++;
-      if (status === "EXCUSED") excused++;
+      if (status === "PRESENT") {
+        present++;
+      }
+
+      if (status === "ABSENT") {
+        absent++;
+      }
+
+      if (status === "EXCUSED") {
+        excused++;
+      }
     }
 
     return {
@@ -247,6 +253,16 @@ export default function TeacherAttendancePage() {
       absent,
       excused,
     };
+  }, [students, attendance]);
+
+  // =========================================================
+  // UNMARKED STUDENTS
+  // =========================================================
+
+  const unmarkedStudents = useMemo(() => {
+    return students.filter(
+      (student) => !attendance[student.id]
+    );
   }, [students, attendance]);
 
   // =========================================================
@@ -317,6 +333,19 @@ export default function TeacherAttendancePage() {
         return;
       }
 
+      // IMPORTANT:
+      // Do not allow saving while some students have no status.
+      if (unmarkedStudents.length > 0) {
+        setError(
+          `Please mark attendance for all students. ${unmarkedStudents.length} student${
+            unmarkedStudents.length === 1 ? "" : "s"
+          } ${
+            unmarkedStudents.length === 1 ? "is" : "are"
+          } still unmarked.`
+        );
+        return;
+      }
+
       setSaving(true);
 
       const payload = {
@@ -324,25 +353,37 @@ export default function TeacherAttendancePage() {
         subjectId: selectedSubjectId,
         term,
         date: selectedDate,
+
         students: students.map((student) => ({
           studentId: student.id,
-          status: attendance[student.id] || "PRESENT",
+
+          // At this point every student must have a status.
+          status: attendance[student.id],
         })),
       };
 
-      console.log("SAVE ATTENDANCE PAYLOAD:", payload);
+      console.log(
+        "SAVE ATTENDANCE PAYLOAD:",
+        payload
+      );
 
-      const response = await fetch("/api/teacher/attendance/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const response = await fetch(
+        "/api/teacher/attendance/save",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
 
       const data = await response.json();
 
-      console.log("SAVE ATTENDANCE RESPONSE:", data);
+      console.log(
+        "SAVE ATTENDANCE RESPONSE:",
+        data
+      );
 
       if (!response.ok) {
         throw new Error(
@@ -357,10 +398,14 @@ export default function TeacherAttendancePage() {
           `Attendance saved successfully for ${students.length} students.`
       );
     } catch (err: any) {
-      console.error("SAVE ATTENDANCE PAGE ERROR:", err);
+      console.error(
+        "SAVE ATTENDANCE PAGE ERROR:",
+        err
+      );
 
       setError(
-        err?.message || "Failed to save attendance."
+        err?.message ||
+          "Failed to save attendance."
       );
     } finally {
       setSaving(false);
@@ -373,10 +418,11 @@ export default function TeacherAttendancePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
-          <p className="text-sm text-gray-500">
+
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Loading attendance...
           </p>
         </div>
@@ -389,48 +435,55 @@ export default function TeacherAttendancePage() {
   // =========================================================
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 transition-colors dark:bg-gray-950 dark:text-gray-100">
       {/* =====================================================
           HEADER
       ====================================================== */}
 
-      <div className="border-b border-gray-200 bg-white">
+      <div className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         <div className="mx-auto max-w-7xl px-6 py-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-4">
-              
-
               <div>
                 <div className="flex items-center gap-2">
                   <CalendarDays
                     size={22}
-                    className="text-purple-600"
+                    className="text-purple-600 dark:text-purple-400"
                   />
 
-                  <h1 className="text-xl font-semibold">
+                  <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
                     Attendance
                   </h1>
                 </div>
 
-                <p className="mt-1 text-sm text-gray-500">
-                  {classroom?.name || "Class"} • Record student attendance
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {classroom?.name || "Class"} • Record
+                  student attendance
                 </p>
               </div>
             </div>
 
             <button
               onClick={saveAttendance}
-              disabled={saving || students.length === 0}
+              disabled={
+                saving ||
+                students.length === 0
+              }
               className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? (
                 <>
-                  <Loader2 size={17} className="animate-spin" />
+                  <Loader2
+                    size={17}
+                    className="animate-spin"
+                  />
+
                   Saving...
                 </>
               ) : (
                 <>
                   <Check size={17} />
+
                   Save Attendance
                 </>
               )}
@@ -445,20 +498,27 @@ export default function TeacherAttendancePage() {
 
       <main className="mx-auto max-w-7xl px-6 py-6">
         {/* ERROR */}
+
         {error && (
-          <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <X size={18} className="mt-0.5 shrink-0" />
+          <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
+            <X
+              size={18}
+              className="mt-0.5 shrink-0"
+            />
+
             <span>{error}</span>
           </div>
         )}
 
         {/* SUCCESS */}
+
         {success && (
-          <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-400">
             <CheckCircle2
               size={18}
               className="mt-0.5 shrink-0"
             />
+
             <span>{success}</span>
           </div>
         )}
@@ -467,12 +527,12 @@ export default function TeacherAttendancePage() {
             CONTROLS
         ==================================================== */}
 
-        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
             {/* SUBJECT */}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Subject
               </label>
 
@@ -480,9 +540,11 @@ export default function TeacherAttendancePage() {
                 <select
                   value={selectedSubjectId}
                   onChange={(e) =>
-                    setSelectedSubjectId(e.target.value)
+                    setSelectedSubjectId(
+                      e.target.value
+                    )
                   }
-                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2.5 pr-10 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2.5 pr-10 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:focus:ring-purple-900/40"
                 >
                   <option value="">
                     Select subject
@@ -508,7 +570,7 @@ export default function TeacherAttendancePage() {
             {/* DATE */}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Attendance Date
               </label>
 
@@ -522,9 +584,11 @@ export default function TeacherAttendancePage() {
                   type="date"
                   value={selectedDate}
                   onChange={(e) =>
-                    setSelectedDate(e.target.value)
+                    setSelectedDate(
+                      e.target.value
+                    )
                   }
-                  className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                  className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-4 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:focus:ring-purple-900/40"
                 />
               </div>
             </div>
@@ -532,7 +596,7 @@ export default function TeacherAttendancePage() {
             {/* TERM */}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Term
               </label>
 
@@ -542,16 +606,18 @@ export default function TeacherAttendancePage() {
                   onChange={(e) =>
                     setTerm(e.target.value)
                   }
-                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2.5 pr-10 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                  className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2.5 pr-10 text-sm text-gray-900 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:focus:ring-purple-900/40"
                 >
-                  {TERM_OPTIONS.map((option) => (
-                    <option
-                      key={option.value}
-                      value={option.value}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
+                  {TERM_OPTIONS.map(
+                    (option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    )
+                  )}
                 </select>
 
                 <ChevronDown
@@ -567,10 +633,12 @@ export default function TeacherAttendancePage() {
             STATISTICS
         ==================================================== */}
 
-        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+          {/* TOTAL */}
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 Total
               </p>
 
@@ -580,60 +648,64 @@ export default function TeacherAttendancePage() {
               />
             </div>
 
-            <p className="mt-2 text-2xl font-semibold">
+            <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
               {statistics.total}
             </p>
           </div>
 
-          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+          {/* PRESENT */}
+
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-900/50 dark:bg-green-950/20">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-green-700">
+              <p className="text-sm text-green-700 dark:text-green-400">
                 Present
               </p>
 
               <UserCheck
                 size={18}
-                className="text-green-600"
+                className="text-green-600 dark:text-green-400"
               />
             </div>
 
-            <p className="mt-2 text-2xl font-semibold text-green-700">
+            <p className="mt-2 text-2xl font-semibold text-green-700 dark:text-green-400">
               {statistics.present}
             </p>
           </div>
 
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+          {/* ABSENT */}
+
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/20">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-red-700">
+              <p className="text-sm text-red-700 dark:text-red-400">
                 Absent
               </p>
 
               <UserX
                 size={18}
-                className="text-red-600"
+                className="text-red-600 dark:text-red-400"
               />
             </div>
 
-            <p className="mt-2 text-2xl font-semibold text-red-700">
+            <p className="mt-2 text-2xl font-semibold text-red-700 dark:text-red-400">
               {statistics.absent}
             </p>
           </div>
 
-          
+          {/* EXCUSED */}
 
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-blue-700">
+              <p className="text-sm text-blue-700 dark:text-blue-400">
                 Excused
               </p>
 
               <CheckCircle2
                 size={18}
-                className="text-blue-600"
+                className="text-blue-600 dark:text-blue-400"
               />
             </div>
 
-            <p className="mt-2 text-2xl font-semibold text-blue-700">
+            <p className="mt-2 text-2xl font-semibold text-blue-700 dark:text-blue-400">
               {statistics.excused}
             </p>
           </div>
@@ -643,17 +715,18 @@ export default function TeacherAttendancePage() {
             STUDENTS
         ==================================================== */}
 
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
           {/* TABLE HEADER */}
 
-          <div className="flex flex-col gap-4 border-b border-gray-200 p-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-4 border-b border-gray-200 p-5 dark:border-gray-800 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="font-semibold">
+              <h2 className="font-semibold text-gray-900 dark:text-white">
                 Student Attendance
               </h2>
 
-              <p className="mt-1 text-sm text-gray-500">
-                Mark attendance for each student.
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Mark attendance for each
+                student.
               </p>
             </div>
 
@@ -673,7 +746,7 @@ export default function TeacherAttendancePage() {
                     setSearch(e.target.value)
                   }
                   placeholder="Search student..."
-                  className="w-full rounded-lg border border-gray-300 py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 sm:w-64"
+                  className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-100 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:ring-purple-900/40 sm:w-64"
                 />
               </div>
 
@@ -681,50 +754,58 @@ export default function TeacherAttendancePage() {
 
               <button
                 onClick={markAllPresent}
-                className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Mark All Present
               </button>
             </div>
           </div>
 
-          {/* TABLE */}
+          {/* =================================================
+              EMPTY STATES
+          ================================================== */}
 
           {students.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
               <Users
                 size={40}
-                className="mb-3 text-gray-300"
+                className="mb-3 text-gray-300 dark:text-gray-600"
               />
 
-              <h3 className="font-medium text-gray-700">
+              <h3 className="font-medium text-gray-700 dark:text-gray-300">
                 No students found
               </h3>
 
-              <p className="mt-1 text-sm text-gray-500">
-                There are currently no students in this classroom.
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                There are currently no
+                students in this classroom.
               </p>
             </div>
           ) : filteredStudents.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
               <Search
                 size={40}
-                className="mb-3 text-gray-300"
+                className="mb-3 text-gray-300 dark:text-gray-600"
               />
 
-              <h3 className="font-medium text-gray-700">
+              <h3 className="font-medium text-gray-700 dark:text-gray-300">
                 No matching students
               </h3>
 
-              <p className="mt-1 text-sm text-gray-500">
-                Try another name or matricule.
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Try another name or
+                matricule.
               </p>
             </div>
           ) : (
+            /* =================================================
+               TABLE
+            ================================================== */
+
             <div className="overflow-x-auto">
               <table className="w-full min-w-[850px]">
                 <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
                     <th className="px-5 py-4">
                       #
                     </th>
@@ -746,18 +827,20 @@ export default function TeacherAttendancePage() {
                 <tbody>
                   {filteredStudents.map(
                     (student, index) => {
+                      // IMPORTANT:
+                      // No fallback to PRESENT.
+                      // Undefined means nothing is selected.
                       const currentStatus =
-                        attendance[student.id] ||
-                        "PRESENT";
+                        attendance[student.id];
 
                       return (
                         <tr
                           key={student.id}
-                          className="border-b border-gray-100 transition hover:bg-gray-50"
+                          className="border-b border-gray-100 transition hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50"
                         >
                           {/* NUMBER */}
 
-                          <td className="px-5 py-4 text-sm text-gray-500">
+                          <td className="px-5 py-4 text-sm text-gray-500 dark:text-gray-400">
                             {index + 1}
                           </td>
 
@@ -765,23 +848,25 @@ export default function TeacherAttendancePage() {
 
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-100 text-sm font-semibold text-purple-700">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-100 text-sm font-semibold text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
                                 {student.firstName
                                   ?.charAt(0)
                                   ?.toUpperCase()}
+
                                 {student.lastName
                                   ?.charAt(0)
                                   ?.toUpperCase()}
                               </div>
 
                               <div>
-                                <p className="text-sm font-medium text-gray-900">
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">
                                   {student.firstName}{" "}
                                   {student.lastName}
                                 </p>
 
-                                <p className="text-xs text-gray-500">
-                                  {student.gender || "Student"}
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  {student.gender ||
+                                    "Student"}
                                 </p>
                               </div>
                             </div>
@@ -789,7 +874,7 @@ export default function TeacherAttendancePage() {
 
                           {/* MATRICULE */}
 
-                          <td className="px-5 py-4 text-sm text-gray-600">
+                          <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
                             {student.matricule}
                           </td>
 
@@ -818,10 +903,12 @@ export default function TeacherAttendancePage() {
                                       className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
                                         active
                                           ? "border-purple-600 bg-purple-600 text-white"
-                                          : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                                          : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:hover:bg-gray-800"
                                       }`}
                                     >
-                                      {option.label}
+                                      {
+                                        option.label
+                                      }
                                     </button>
                                   );
                                 }
@@ -837,17 +924,19 @@ export default function TeacherAttendancePage() {
             </div>
           )}
 
-          {/* FOOTER */}
+          {/* =================================================
+              FOOTER
+          ================================================== */}
 
           {students.length > 0 && (
-            <div className="flex flex-col gap-3 border-t border-gray-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-gray-500">
+            <div className="flex flex-col gap-3 border-t border-gray-200 px-5 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 Showing{" "}
-                <span className="font-medium text-gray-700">
+                <span className="font-medium text-gray-700 dark:text-gray-200">
                   {filteredStudents.length}
                 </span>{" "}
                 of{" "}
-                <span className="font-medium text-gray-700">
+                <span className="font-medium text-gray-700 dark:text-gray-200">
                   {students.length}
                 </span>{" "}
                 students
@@ -864,11 +953,13 @@ export default function TeacherAttendancePage() {
                       size={17}
                       className="animate-spin"
                     />
+
                     Saving...
                   </>
                 ) : (
                   <>
                     <Check size={17} />
+
                     Save Attendance
                   </>
                 )}

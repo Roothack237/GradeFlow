@@ -6,13 +6,13 @@ import {
   Check,
   ChevronDown,
   ClipboardList,
+  Download,
   Loader2,
   RefreshCw,
   Save,
   Search,
   Users,
 } from "lucide-react";
-
 /* =========================================================
    TYPES
 ========================================================= */
@@ -1080,6 +1080,51 @@ export default function TeacherMarksPage() {
   }
 
   /* =======================================================
+   GENERATE MARK SHEET
+======================================================= */
+
+     function handleGenerateMarkSheet() {
+        setError("");
+        setSuccess("");
+
+        if (!selectedClassroomId) {
+          setError("Please select a classroom.");
+          return;
+        }
+
+        if (!selectedSubjectId) {
+          setError("Please select a subject.");
+          return;
+        }
+
+        if (!selectedTermId) {
+          setError("Please select a term.");
+          return;
+        }
+
+        if (!selectedSequenceId) {
+          setError("Please select a sequence.");
+          return;
+        }
+
+        if (students.length === 0) {
+          setError("There are no students to generate a mark sheet.");
+          return;
+        }
+
+        const params = new URLSearchParams({
+          classroomId: selectedClassroomId,
+          subjectId: selectedSubjectId,
+          termId: selectedTermId,
+          sequenceId: selectedSequenceId,
+        });
+
+        window.location.href =
+          `/api/teacher/marks/mark-sheet?${params.toString()}`;
+      }
+
+
+  /* =======================================================
      FILTER STUDENTS
   ======================================================= */
 
@@ -1684,6 +1729,25 @@ export default function TeacherMarksPage() {
                   </>
                 )}
               </button>
+
+                {/* GENERATE MARK SHEET */}
+             <button
+                type="button"
+                onClick={handleGenerateMarkSheet}
+                disabled={
+                  loadingMarks ||
+                  students.length === 0 ||
+                  !selectedClassroomId ||
+                  !selectedSubjectId ||
+                  !selectedTermId ||
+                  !selectedSequenceId
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-purple-200 bg-white px-4 py-2.5 text-sm font-semibold text-purple-700 transition hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-purple-900/50 dark:bg-gray-900 dark:text-purple-300 dark:hover:bg-purple-950/30"
+              >
+                <Download size={16} />
+                Generate Mark Sheet
+              </button>
+
             </div>
           </div>
 
