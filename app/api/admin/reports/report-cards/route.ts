@@ -180,10 +180,10 @@ export async function GET(req: NextRequest) {
     // ==================================================
 
     const publication =
-      await prisma.resultPublication.findUnique({
+      await prisma.sequencePublication.findUnique({
         where: {
-          termId_classroomId: {
-            termId,
+          sequenceId_classroomId: {
+            sequenceId,
             classroomId,
           },
         },

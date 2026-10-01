@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin-auth";
+import { logAudit } from "@/lib/audit";
+import { buildTermReportCards } from "@/lib/report-card";
 import {
   Prisma,
   PublicationStatus,
@@ -131,12 +132,13 @@ export async function GET(req: NextRequest) {
       where: classroomId
         ? {
             id: classroomId,
+            academicYearId: term.academicYear.id,
           }
-        : undefined,
+        : {
+            academicYearId: term.academicYear.id,
+          },
 
-      orderBy: {
-        name: "asc",
-      },
+      orderBy: [{ section: { name: "asc" } }, { name: "asc" }],
 
       select: {
         id: true,
@@ -551,11 +553,18 @@ export async function POST(req: NextRequest) {
         select: {
           id: true,
           name: true,
+          academicYearId: true,
+
+          section: {
+            select: { name: true },
+          },
 
           students: {
             select: {
               id: true,
-              parentId: true,
+              parent: {
+                select: { userId: true },
+              },
             },
           },
 
@@ -574,6 +583,14 @@ export async function POST(req: NextRequest) {
     if (!classroom) {
       return badRequest("Classroom not found.");
     }
+
+    if (classroom.academicYearId !== term.academicYear.id) {
+      return badRequest("The selected class does not belong to this academic year.");
+    }
+
+    const classLabel = classroom.section
+      ? `${classroom.name} · ${classroom.section.name}`
+      : classroom.name;
 
     // ==================================================
     // VALIDATE SEQUENCE
@@ -631,6 +648,76 @@ export async function POST(req: NextRequest) {
           ? "No marks have been recorded for this class and term. Generate the report cards after entering marks."
           : "No marks have been recorded for this class and term."
       );
+    }
+
+    if (
+      action === "PUBLISH" &&
+      publicationType === "REPORT_CARD"
+    ) {
+      const { cards } = await buildTermReportCards({
+        termId,
+        classroomId,
+      });
+      const cardsWithMarks = cards.filter(
+        (card) => card.marks.recorded > 0 && card.totals.average !== null
+      );
+
+      if (cardsWithMarks.length === 0) {
+        return badRequest(
+          "No complete term report cards could be generated for this class."
+        );
+      }
+
+      for (const card of cardsWithMarks) {
+        const savedCard = await prisma.reportCard.upsert({
+          where: {
+            studentId_termId: {
+              studentId: card.student.id,
+              termId,
+            },
+          },
+          create: {
+            studentId: card.student.id,
+            classroomId,
+            termId,
+            academicYearId: term.academicYear.id,
+            total: card.totals.points,
+            average: card.totals.average,
+            position: card.class.position,
+            decision: card.decision,
+            principalRemark: card.principalRemark,
+          },
+          update: {
+            classroomId,
+            academicYearId: term.academicYear.id,
+            total: card.totals.points,
+            average: card.totals.average,
+            position: card.class.position,
+            decision: card.decision,
+            principalRemark: card.principalRemark,
+            generatedAt: new Date(),
+          },
+        });
+
+        await prisma.reportCardSubject.deleteMany({
+          where: { reportCardId: savedCard.id },
+        });
+
+        const subjects = card.subjects.filter(
+          (subject) => subject.average !== null
+        );
+        if (subjects.length > 0) {
+          await prisma.reportCardSubject.createMany({
+            data: subjects.map((subject) => ({
+              reportCardId: savedCard.id,
+              subjectId: subject.subjectId,
+              mark: subject.average as number,
+              grade: subject.grade,
+              remark: subject.remark,
+            })),
+          });
+        }
+      }
     }
 
     // ==================================================
@@ -695,37 +782,42 @@ export async function POST(req: NextRequest) {
       // AUDIT LOG
       // ==================================================
 
-      await prisma.auditLog.create({
-        data: {
-          userId: admin.id ?? null,
-
-          action:
-            action === "PUBLISH"
-              ? "PUBLISH_RESULTS"
-              : "UNPUBLISH_RESULTS",
-
-          entityType: "ResultPublication",
-
-          entityId: publication.id,
-
-          description:
-            publicationType === "REPORT_CARD"
-              ? `Published report cards for ${term.name} - ${classroom.name}.`
-              : action === "PUBLISH"
-              ? `Published results for ${term.name} - ${classroom.name}.`
-              : `Unpublished results for ${term.name} - ${classroom.name}.`,
-
-          metadata: {
-            scope,
-            publicationType,
-            termId,
-            classroomId,
-            sequenceId: sequenceId || null,
-            marksCount,
-            notes: notes || null,
-          },
+      await logAudit({
+        actorId: admin.id,
+        actorName: admin.fullName,
+        action: action === "PUBLISH" ? "RESULT_PUBLISHED" : "RESULT_UNPUBLISHED",
+        entityType: "ResultPublication",
+        entityId: publication.id,
+        description:
+          publicationType === "REPORT_CARD"
+            ? `Published report cards for ${term.name} - ${classLabel}.`
+            : action === "PUBLISH"
+              ? `Published results for ${term.name} - ${classLabel}.`
+              : `Unpublished results for ${term.name} - ${classLabel}.`,
+        metadata: {
+          scope,
+          publicationType,
+          termId,
+          classroomId,
+          sequenceId: sequenceId || null,
+          marksCount,
+          notes: notes || null,
         },
       });
+
+      if (action === "UNPUBLISH" && term.sequences.length > 0) {
+        await prisma.sequencePublication.updateMany({
+          where: {
+            classroomId,
+            sequenceId: { in: term.sequences.map((sequence) => sequence.id) },
+          },
+          data: {
+            status: PublicationStatus.UNPUBLISHED,
+            publishedAt: null,
+            publishedById: null,
+          },
+        });
+      }
 
       // ==================================================
       // NOTIFICATIONS
@@ -739,7 +831,7 @@ export async function POST(req: NextRequest) {
             classroom.students
               .map(
                 (student) =>
-                  student.parentId
+                  student.parent?.userId
               )
               .filter(
                 (
@@ -781,7 +873,7 @@ export async function POST(req: NextRequest) {
                   `Report card available — ${term.name}`,
 
                 message:
-                  `The ${term.name} report card for ${classroom.name} (${term.academicYear.name}) is now available.`,
+                  `The ${term.name} report card for ${classLabel} (${term.academicYear.name}) is now available.`,
 
                 actionUrl:
                   "/parent/report-cards",
@@ -817,7 +909,7 @@ export async function POST(req: NextRequest) {
                   `Results published — ${term.name}`,
 
                 message:
-                  `Results for ${classroom.name} (${term.academicYear.name}) are now available.`,
+                  `Results for ${classLabel} in ${term.name} (${term.academicYear.name}) are now available.`,
 
                 actionUrl:
                   "/parent/children",
@@ -843,7 +935,7 @@ export async function POST(req: NextRequest) {
                   `Results published — ${term.name}`,
 
                 message:
-                  `Results for ${classroom.name} (${term.academicYear.name}) have been published.`,
+                  `Results for ${classLabel} in ${term.name} (${term.academicYear.name}) have been published.`,
 
                 actionUrl:
                   "/teacher",
@@ -877,9 +969,9 @@ export async function POST(req: NextRequest) {
           action === "PUBLISH"
             ? publicationType ===
               "REPORT_CARD"
-              ? `Report cards for ${classroom.name} — ${term.name} have been published successfully.`
-              : `Results for ${classroom.name} — ${term.name} have been published successfully.`
-            : `Publication for ${classroom.name} — ${term.name} has been unpublished.`,
+              ? `Report cards for ${classLabel} — ${term.name} have been published successfully.`
+              : `Results for ${classLabel} — ${term.name} have been published successfully.`
+            : `Publication for ${classLabel} — ${term.name} has been unpublished.`,
 
         publication: {
           id: publication.id,
@@ -951,35 +1043,24 @@ export async function POST(req: NextRequest) {
     // AUDIT LOG
     // ==================================================
 
-    await prisma.auditLog.create({
-      data: {
-        userId: admin.id ?? null,
-
-        action:
-          action === "PUBLISH"
-            ? "PUBLISH_RESULTS"
-            : "UNPUBLISH_RESULTS",
-
-        entityType:
-          "SequencePublication",
-
-        entityId:
-          sequencePublication.id,
-
-        description:
-          action === "PUBLISH"
-            ? `Published ${selectedSequence?.name ?? "sequence"} results for ${classroom.name}.`
-            : `Unpublished ${selectedSequence?.name ?? "sequence"} results for ${classroom.name}.`,
-
-        metadata: {
-          scope,
-          publicationType,
-          termId,
-          classroomId,
-          sequenceId,
-          marksCount,
-          notes: notes || null,
-        },
+    await logAudit({
+      actorId: admin.id,
+      actorName: admin.fullName,
+      action: action === "PUBLISH" ? "RESULT_PUBLISHED" : "RESULT_UNPUBLISHED",
+      entityType: "SequencePublication",
+      entityId: sequencePublication.id,
+      description:
+        action === "PUBLISH"
+          ? `Published ${selectedSequence?.name ?? "sequence"} results for ${classLabel}.`
+          : `Unpublished ${selectedSequence?.name ?? "sequence"} results for ${classLabel}.`,
+      metadata: {
+        scope,
+        publicationType,
+        termId,
+        classroomId,
+        sequenceId,
+        marksCount,
+        notes: notes || null,
       },
     });
 
@@ -1040,7 +1121,7 @@ export async function POST(req: NextRequest) {
               `${
                 selectedSequence?.name ??
                 "Sequence results"
-              } for ${classroom.name} are now available.`,
+              } for ${classLabel} in ${term.name} (${term.academicYear.name}) are now available.`,
 
             actionUrl:
               "/parent/children",
@@ -1072,7 +1153,7 @@ export async function POST(req: NextRequest) {
               `${
                 selectedSequence?.name ??
                 "Sequence results"
-              } for ${classroom.name} have been published.`,
+              } for ${classLabel} in ${term.name} (${term.academicYear.name}) have been published.`,
 
             actionUrl:
               "/teacher",
@@ -1106,11 +1187,11 @@ export async function POST(req: NextRequest) {
           ? `${
               selectedSequence?.name ??
               "Sequence"
-            } results for ${classroom.name} have been published successfully.`
+              } results for ${classLabel} have been published successfully.`
           : `${
               selectedSequence?.name ??
               "Sequence"
-            } publication for ${classroom.name} has been unpublished.`,
+              } publication for ${classLabel} has been unpublished.`,
 
       publication: {
         id: sequencePublication.id,

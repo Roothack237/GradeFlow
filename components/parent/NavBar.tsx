@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Bell, Menu } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Bell, Menu, Moon, Sun } from "lucide-react";
 
 import Link from "next/link";
 
@@ -24,15 +25,6 @@ gender?: string;
 image?: string | null;
 };
 
-type NotificationItem = {
-id: string;
-title: string;
-message: string;
-type: string;
-read: boolean;
-createdAt: string;
-};
-
 // =========================================================
 // COMPONENT
 // =========================================================
@@ -44,6 +36,7 @@ onMenuClick,
 }: NavbarProps) {
 const [parent, setParent] = useState<ParentProfile | null>(null);
 const [unread, setUnread] = useState(0);
+const { resolvedTheme, setTheme } = useTheme();
 
 // =======================================================
 // LOAD PARENT PROFILE
@@ -268,21 +261,16 @@ return ( <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/
           </span>
         )}
       </Link>
-      <Link
-        href="/parent/notifications"
-        title="Notifications"
-        aria-label="Open notifications"
-        className="relative rounded-xl p-2.5 text-gray-600 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-      >
-        <Bell className="h-5 w-5" />
 
-        {/* UNREAD BADGE */}
-        {unread > 0 && (
-          <span className="absolute right-1 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-purple-700 px-1 text-[9px] font-bold text-white">
-            {unread > 9 ? "9+" : unread}
-          </span>
-        )}
-      </Link>
+      <button
+        type="button"
+        onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+        title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        className="rounded-xl p-2.5 text-gray-600 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+      >
+        {resolvedTheme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+      </button>
 
       {/* =================================================
           DIVIDER

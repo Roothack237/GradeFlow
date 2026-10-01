@@ -156,13 +156,14 @@ export async function GET(request: Request) {
         const sequencePublication =
           sequencePublicationMap.get(sequence.id);
 
-        const sequencePublished =
-          sequencePublication?.status === "PUBLISHED";
-
         const wholeTermPublished =
           termPublication?.status === "PUBLISHED";
 
-        if (sequencePublished || wholeTermPublished) {
+        const isPublished = sequencePublication
+          ? sequencePublication.status === "PUBLISHED"
+          : wholeTermPublished;
+
+        if (isPublished) {
           publishedSequenceIds.add(sequence.id);
         }
       }
@@ -597,7 +598,7 @@ export async function GET(request: Request) {
         principalRemark:
           card.principalRemark,
 
-        pdfUrl: card.pdfUrl,
+        pdfUrl: `/api/parent/report-cards/pdf?studentId=${encodeURIComponent(card.studentId)}&termId=${encodeURIComponent(card.termId)}`,
 
         published: true,
 

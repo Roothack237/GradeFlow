@@ -5,7 +5,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   AlertCircle,
-  Award,
   BookOpen,
   Calendar,
   ChevronDown,
@@ -93,48 +92,59 @@ async function downloadChildResultsPdf(data: ResultsData) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const pageWidth = 595;
-  const pageHeight = 842;
-  const margin = 42;
-  const purple = rgb(0.4, 0.22, 0.62);
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const margin = 36;
+  const tableWidth = pageWidth - margin * 2;
+  const accent = rgb(0.35, 0.25, 0.58);
+  const ink = rgb(0.15, 0.17, 0.2);
+  const muted = rgb(0.38, 0.4, 0.44);
+  const headerFill = rgb(0.93, 0.92, 0.96);
+  const rowFill = rgb(0.97, 0.97, 0.98);
   let page = pdf.addPage([pageWidth, pageHeight]);
   let y = pageHeight - margin;
 
   const safeText = (value: unknown) =>
     String(value ?? "—").replace(/[^\x20-\x7E]/g, "?");
 
-  const addPage = () => {
-    page = pdf.addPage([pageWidth, pageHeight]);
-    y = pageHeight - margin;
+  const drawPageHeader = () => {
     page.drawText("GradeFlow | Published Academic Results", {
       x: margin,
       y,
       size: 9,
       font: bold,
-      color: purple,
+      color: accent,
     });
-    y -= 17;
+    y -= 15;
     page.drawLine({
       start: { x: margin, y },
       end: { x: pageWidth - margin, y },
-      thickness: 1.5,
-      color: purple,
+      thickness: 1.25,
+      color: accent,
     });
-    y -= 20;
+    y -= 18;
+  };
+
+  drawPageHeader();
+
+  const addPage = () => {
+    page = pdf.addPage([pageWidth, pageHeight]);
+    y = pageHeight - margin;
+    drawPageHeader();
   };
 
   const ensureSpace = (height: number) => {
     if (y - height < margin) addPage();
   };
 
-  const drawParagraph = (
+  const drawTextBlock = (
     value: unknown,
-    options: { size?: number; font?: typeof regular; color?: typeof purple; indent?: number } = {}
+    options: { size?: number; font?: typeof regular; color?: typeof ink; indent?: number } = {}
   ) => {
     const size = options.size ?? 9;
     const font = options.font ?? regular;
-    const indent = options.indent ?? 0;
-    const maxWidth = pageWidth - margin * 2 - indent;
+    const x = margin + (options.indent ?? 0);
+    const maxWidth = pageWidth - margin - x;
     const words = safeText(value).split(/\s+/);
     let line = "";
 
@@ -143,11 +153,11 @@ async function downloadChildResultsPdf(data: ResultsData) {
       if (line && font.widthOfTextAtSize(candidate, size) > maxWidth) {
         ensureSpace(size + 5);
         page.drawText(line, {
-          x: margin + indent,
+          x,
           y,
           size,
           font,
-          color: options.color ?? rgb(0.15, 0.17, 0.2),
+          color: options.color ?? ink,
         });
         y -= size + 5;
         line = word;
@@ -159,34 +169,147 @@ async function downloadChildResultsPdf(data: ResultsData) {
     if (line) {
       ensureSpace(size + 5);
       page.drawText(line, {
-        x: margin + indent,
+        x,
         y,
         size,
         font,
-        color: options.color ?? rgb(0.15, 0.17, 0.2),
+        color: options.color ?? ink,
       });
       y -= size + 5;
     }
   };
 
   const drawSectionHeading = (title: string) => {
-    ensureSpace(40);
+    ensureSpace(30);
     y -= 4;
     page.drawText(safeText(title), {
       x: margin,
       y,
-      size: 13,
+      size: 12,
       font: bold,
-      color: purple,
+      color: accent,
     });
-    y -= 18;
+    y -= 16;
     page.drawLine({
       start: { x: margin, y },
       end: { x: pageWidth - margin, y },
-      thickness: 1.25,
-      color: purple,
+      thickness: 0.8,
+      color: accent,
     });
-    y -= 13;
+    y -= 10;
+  };
+
+  const wrapCell = (value: string, fontSize: number, maxWidth: number) => {
+    const words = safeText(value).split(/\s+/);
+    const lines: string[] = [];
+    let line = "";
+
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && regular.widthOfTextAtSize(candidate, fontSize) > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+
+    if (line) lines.push(line);
+    if (lines.length > 4) {
+      lines.length = 4;
+      lines[3] = `${lines[3].slice(0, 34)}...`;
+    }
+    return lines.length ? lines : [""];
+  };
+
+  const drawTable = (
+    columns: { label: string; weight: number }[],
+    rows: string[][]
+  ) => {
+    const weightTotal = columns.reduce((total, column) => total + column.weight, 0);
+    const widths = columns.map((column) => tableWidth * column.weight / weightTotal);
+    const headerHeight = 22;
+    const fontSize = 7.5;
+    const lineHeight = 9.5;
+
+    const drawTableHeader = () => {
+      ensureSpace(headerHeight);
+      page.drawRectangle({
+        x: margin,
+        y: y - headerHeight + 4,
+        width: tableWidth,
+        height: headerHeight,
+        color: headerFill,
+      });
+      let x = margin;
+      columns.forEach((column, index) => {
+        page.drawText(safeText(column.label), {
+          x: x + 5,
+          y: y - 11,
+          size: 8,
+          font: bold,
+          color: accent,
+          maxWidth: widths[index] - 10,
+        });
+        x += widths[index];
+      });
+      page.drawLine({
+        start: { x: margin, y: y - headerHeight + 4 },
+        end: { x: pageWidth - margin, y: y - headerHeight + 4 },
+        thickness: 0.6,
+        color: accent,
+      });
+      y -= headerHeight;
+    };
+
+    drawTableHeader();
+
+    rows.forEach((row, rowIndex) => {
+      const cells = columns.map((column, index) =>
+        wrapCell(row[index] ?? "", fontSize, widths[index] - 10)
+      );
+      const rowHeight = Math.max(20, Math.max(...cells.map((cell) => cell.length)) * lineHeight + 8);
+
+      if (y - rowHeight < margin) {
+        addPage();
+        drawTableHeader();
+      }
+
+      if (rowIndex % 2 === 1) {
+        page.drawRectangle({
+          x: margin,
+          y: y - rowHeight + 4,
+          width: tableWidth,
+          height: rowHeight,
+          color: rowFill,
+        });
+      }
+
+      let x = margin;
+      cells.forEach((lines, index) => {
+        lines.forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: x + 5,
+            y: y - 12 - lineIndex * lineHeight,
+            size: fontSize,
+            font: regular,
+            color: ink,
+            maxWidth: widths[index] - 10,
+          });
+        });
+        x += widths[index];
+      });
+
+      y -= rowHeight;
+      page.drawLine({
+        start: { x: margin, y: y + 4 },
+        end: { x: pageWidth - margin, y: y + 4 },
+        thickness: 0.4,
+        color: rgb(0.82, 0.82, 0.85),
+      });
+    });
+
+    y -= 10;
   };
 
   page.drawText("GRADE FLOW", {
@@ -194,84 +317,107 @@ async function downloadChildResultsPdf(data: ResultsData) {
     y,
     size: 10,
     font: bold,
-    color: purple,
+    color: accent,
   });
   y -= 23;
   page.drawText("Academic Results", {
     x: margin,
     y,
-    size: 22,
+    size: 20,
     font: bold,
-    color: rgb(0.12, 0.14, 0.18),
+    color: ink,
   });
   y -= 27;
-  drawParagraph(data.student.name, { size: 14, font: bold });
-  drawParagraph(
+  drawTextBlock(data.student.name, { size: 13, font: bold });
+  drawTextBlock(
     `Matricule: ${data.student.matricule} | Class: ${data.student.class ?? "—"} | Section: ${data.student.section ?? "—"}`,
     { size: 9 }
   );
-  drawParagraph(`Grading scale: ${data.scale.maxMark} | Pass mark: ${data.scale.passMark}`, {
+  drawTextBlock(`Grading scale: ${data.scale.maxMark} | Pass mark: ${data.scale.passMark}`, {
     size: 9,
   });
-  drawParagraph(`Generated: ${new Date().toLocaleDateString()}`, {
+  drawTextBlock(`Generated: ${new Date().toLocaleDateString()}`, {
     size: 9,
-    color: rgb(0.4, 0.42, 0.45),
+    color: muted,
   });
   y -= 4;
   page.drawLine({
     start: { x: margin, y },
     end: { x: pageWidth - margin, y },
-    thickness: 2,
-    color: purple,
+    thickness: 1.5,
+    color: accent,
   });
   y -= 14;
 
   if (data.terms.length === 0) {
-    drawParagraph("No published results are currently available for this child.");
+    drawTextBlock("No published results are currently available for this child.");
   }
 
   for (const term of data.terms) {
     drawSectionHeading(`${term.name} | ${term.academicYear}`);
 
     for (const sequence of term.sequences) {
-      ensureSpace(42);
-      drawParagraph(sequence.name, { size: 11, font: bold });
-      drawParagraph(
-        `Average: ${sequence.average === null ? "—" : `${sequence.average}/${data.scale.maxMark}`} | Class rank: ${sequence.rank ?? "—"} | Published: ${sequence.publication.publishedAt ? new Date(sequence.publication.publishedAt).toLocaleDateString() : "—"}`,
-        { size: 9 }
+      drawSectionHeading(sequence.name);
+      drawTable(
+        [
+          { label: "Average", weight: 1 },
+          { label: "Class rank", weight: 1 },
+          { label: "Marks", weight: 1 },
+          { label: "Published", weight: 1.5 },
+        ],
+        [[
+          sequence.average === null ? "—" : `${sequence.average}/${data.scale.maxMark}`,
+          String(sequence.rank ?? "—"),
+          String(sequence.marks),
+          sequence.publication.publishedAt
+            ? new Date(sequence.publication.publishedAt).toLocaleDateString()
+            : "—",
+        ]]
       );
 
       if (sequence.subjects.length === 0) {
-        drawParagraph("No published subject marks for this sequence.", { indent: 8 });
-      }
-
-      for (const subject of sequence.subjects) {
-        ensureSpace(36);
-        drawParagraph(
-          `${subject.subject} | ${subject.score}/${data.scale.maxMark} | Grade ${subject.grade} | Coefficient ${subject.coefficient}`,
-          { font: bold, indent: 8 }
+        drawTextBlock("No published subject marks for this sequence.", { indent: 8 });
+      } else {
+        drawTable(
+          [
+            { label: "Subject", weight: 1.4 },
+            { label: "Score", weight: 0.65 },
+            { label: "Grade", weight: 0.55 },
+            { label: "Coefficient", weight: 0.75 },
+            { label: "Teacher", weight: 1.2 },
+            { label: "Remark", weight: 2 },
+          ],
+          sequence.subjects.map((subject) => [
+            subject.subject,
+            `${subject.score}/${data.scale.maxMark}`,
+            subject.grade,
+            String(subject.coefficient),
+            subject.teacher,
+            subject.remark ?? "—",
+          ])
         );
-        drawParagraph(`Teacher: ${subject.teacher} | Remark: ${subject.remark ?? "—"}`, {
-          size: 8,
-          indent: 8,
-          color: rgb(0.38, 0.4, 0.44),
-        });
       }
-      y -= 7;
     }
   }
 
   if (data.reportCards.length > 0) {
     drawSectionHeading("Published Term Summaries");
-    for (const card of data.reportCards) {
-      drawParagraph(
-        `${card.term} | Average: ${card.average}/${data.scale.maxMark} | Position: ${card.position ?? "—"} | Decision: ${card.decision ?? "—"}`,
-        { font: bold }
-      );
-      if (card.principalRemark) {
-        drawParagraph(`Principal remark: ${card.principalRemark}`, { indent: 8 });
-      }
-    }
+    drawTable(
+      [
+        { label: "Term", weight: 1.2 },
+        { label: "Average", weight: 0.8 },
+        { label: "Position", weight: 0.7 },
+        { label: "Decision", weight: 1 },
+        { label: "Principal remark", weight: 2.3 },
+      ],
+      data.reportCards.map((card) => [
+        card.term,
+        `${card.average}/${data.scale.maxMark}`,
+        String(card.position ?? "—"),
+        card.decision ?? "—",
+        card.principalRemark ?? "—",
+      ])
+    );
   }
 
   const bytes = await pdf.save();

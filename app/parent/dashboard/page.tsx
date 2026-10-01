@@ -8,6 +8,7 @@ BookOpen,
 CalendarCheck,
 ChevronRight,
 ClipboardList,
+Download,
 MessageSquare,
 Sparkles,
 TrendingUp,
@@ -34,6 +35,15 @@ initials: string;
 matricule: string;
 gender: string;
 classroomId: string;
+reportCards: {
+id: string;
+term: string;
+average: number;
+rank: number | null;
+decision: string | null;
+generatedAt: string;
+pdfUrl: string;
+}[];
 };
 
 type Parent = {
@@ -53,6 +63,7 @@ title: string;
 message: string;
 time: string;
 type: "result" | "attendance" | "announcement";
+actionUrl?: string | null;
 };
 
 // =========================================================
@@ -90,6 +101,13 @@ children.length > 0
 0
 ) / children.length
 : 0;
+
+const publishedReportCards = children.flatMap((child) =>
+child.reportCards.map((reportCard) => ({
+...reportCard,
+childName: child.name,
+}))
+);
 
 // =======================================================
 // LOAD PARENT DASHBOARD DATA
@@ -197,7 +215,7 @@ onClose={() => setSidebarOpen(false)}
               </h1>
 
               <p className="mt-2 max-w-2xl text-sm text-blue-100">
-                Stay informed about your children's academic
+                Stay informed about your children&apos;s academic
                 performance, attendance, results, and school
                 activities.
               </p>
@@ -427,6 +445,74 @@ onClose={() => setSidebarOpen(false)}
       </section>
 
       {/* =================================================
+          PUBLISHED REPORT CARDS
+      ================================================= */}
+
+      <section className="mb-8">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              Published Report Cards
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Term results released for your children.
+            </p>
+          </div>
+          <Link
+            href="/parent/report-cards"
+            className="flex shrink-0 items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            View All
+            <ChevronRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        {publishedReportCards.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 p-6 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
+            Published report cards will appear here.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-800 dark:border-gray-800 dark:bg-gray-900">
+            {publishedReportCards.map((reportCard) => (
+              <div
+                key={reportCard.id}
+                className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">
+                    {reportCard.childName}
+                  </p>
+                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                    {reportCard.term}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Generated {new Date(reportCard.generatedAt).toLocaleDateString("en-GB")}
+                    {reportCard.decision ? ` · ${reportCard.decision}` : ""}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-5 sm:justify-end">
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">Average · Rank</p>
+                    <p className="text-sm font-bold text-gray-900 dark:text-white">
+                      {reportCard.average}/20 · {reportCard.rank ? `#${reportCard.rank}` : "—"}
+                    </p>
+                  </div>
+                  <a
+                    href={reportCard.pdfUrl}
+                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-800"
+                  >
+                    <Download size={16} />
+                    Download PDF
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* =================================================
           BOTTOM GRID
       ================================================= */}
 
@@ -468,7 +554,7 @@ onClose={() => setSidebarOpen(false)}
               {notifications.map((notification) => (
                 <Link
                   key={notification.id}
-                  href="/parent/notifications"
+                  href={notification.actionUrl || "/parent/notifications"}
                   className="flex items-start gap-4 rounded-xl border border-gray-100 p-4 transition hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50"
                 >
                   <div className="rounded-xl bg-blue-100 p-2.5 dark:bg-blue-900/30">

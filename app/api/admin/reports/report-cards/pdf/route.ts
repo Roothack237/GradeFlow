@@ -53,6 +53,7 @@ export async function GET(request: Request) {
     const { cards, term } = await buildTermReportCards({
       termId,
       classroomId,
+      sequenceId,
       includeInactive,
     });
 

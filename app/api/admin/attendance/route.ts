@@ -101,7 +101,13 @@ export async function GET(request: Request) {
               firstName: true,
               lastName: true,
               matricule: true,
-              classroom: { select: { id: true, name: true } },
+              classroom: {
+                select: {
+                  id: true,
+                  name: true,
+                  section: { select: { name: true } },
+                },
+              },
             },
           },
           subject: { select: { id: true, name: true, code: true } },
@@ -164,6 +170,7 @@ export async function GET(request: Request) {
         matricule: record.student.matricule,
         className: record.student.classroom?.name ?? null,
         classroomId: record.student.classroom?.id ?? null,
+        sectionName: record.student.classroom?.section.name ?? null,
         subjectName: record.subject.name,
         subjectId: record.subjectId,
         teacherName: record.teacher.fullName,

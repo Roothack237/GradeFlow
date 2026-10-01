@@ -417,13 +417,8 @@ async function publishReportCards() {
     reportCards.publication?.published ??
     reportCards.summary.published;
 
-  if (alreadyPublished) {
-    alert("The report cards for this class and term are already published.");
-    return;
-  }
-
   const confirmed = window.confirm(
-    `Publish report cards for ${reportCards.classroom.name} - ${reportCards.term.name}?\n\nParents will be able to access the published report cards.`
+    `${alreadyPublished ? "Update and resend" : "Publish"} report cards for ${reportCards.classroom.name} - ${reportCards.term.name}?\n\nParents will be able to access the published report cards.`
   );
 
   if (!confirmed) {
@@ -845,11 +840,7 @@ async function publishReportCards() {
                       <button
                         type="button"
                         onClick={publishReportCards}
-                        disabled={
-                          publishing ||
-                          (reportCards.publication?.published ??
-                            reportCards.summary.published)
-                        }
+                        disabled={publishing}
                         className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {publishing ? (
@@ -859,12 +850,19 @@ async function publishReportCards() {
                           </>
                         ) : (
                           <>
-                            <Send className="h-4 w-4" />
+                            {(
+                              reportCards.publication?.published ??
+                              reportCards.summary.published
+                            ) ? (
+                              <RefreshCw className="h-4 w-4" />
+                            ) : (
+                              <Send className="h-4 w-4" />
+                            )}
                             {(
                               reportCards.publication?.published ??
                               reportCards.summary.published
                             )
-                              ? "Report Cards Published"
+                              ? "Update Parent Copies"
                               : "Publish Report Cards"}
                           </>
                         )}

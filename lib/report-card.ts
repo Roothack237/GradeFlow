@@ -184,6 +184,7 @@ export type ReportCardData = {
 export type BuildReportCardsOptions = {
   termId: string;
   classroomId?: string | null;
+  sequenceId?: string | null;
 
   /**
    * Include suspended/dismissed students.
@@ -219,6 +220,7 @@ export async function buildTermReportCards(
   const {
     termId,
     classroomId,
+    sequenceId,
     includeInactive = false,
   } = options;
 
@@ -279,7 +281,11 @@ export async function buildTermReportCards(
    * Fifth Sequence + Sixth Sequence
    */
 
-  const sequenceIds = term.sequences.map(
+  const selectedSequences = sequenceId
+    ? term.sequences.filter((sequence) => sequence.id === sequenceId)
+    : term.sequences;
+
+  const sequenceIds = selectedSequences.map(
     (sequence) => sequence.id
   );
 
@@ -795,7 +801,7 @@ export async function buildTermReportCards(
          */
 
         const sequenceMarks: SequenceMark[] =
-          term.sequences.map(
+          selectedSequences.map(
             (sequence) => {
               const mark =
                 perSequence.get(
@@ -1000,7 +1006,7 @@ export async function buildTermReportCards(
 
       const expected =
         subjectIds.size *
-        term.sequences.length;
+        selectedSequences.length;
 
       const missing =
         Math.max(
@@ -1105,7 +1111,7 @@ export async function buildTermReportCards(
         },
 
         sequences:
-          term.sequences,
+          selectedSequences,
 
         subjects:
           lines,

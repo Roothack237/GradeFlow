@@ -438,18 +438,20 @@ export async function GET(request: Request) {
       }
 
       if (
+        sequencePublication?.status ===
+        "UNPUBLISHED"
+      ) {
+        return "UNPUBLISHED";
+      }
+
+      if (
         termPublication?.status ===
         "PUBLISHED"
       ) {
         return "TERM_PUBLISHED";
       }
 
-      if (
-        sequencePublication?.status ===
-          "UNPUBLISHED" ||
-        termPublication?.status ===
-          "UNPUBLISHED"
-      ) {
+      if (termPublication?.status === "UNPUBLISHED") {
         return "UNPUBLISHED";
       }
 

@@ -39,6 +39,17 @@ export async function GET() {
             },
             marks: true,
             attendances: true,
+            reportCards: {
+              orderBy: { generatedAt: "desc" },
+              include: {
+                term: {
+                  select: {
+                    name: true,
+                    academicYear: { select: { name: true } },
+                  },
+                },
+              },
+            },
           },
 
           orderBy: {
@@ -54,6 +65,38 @@ export async function GET() {
         { status: 404 }
       );
     }
+
+    const classroomIds = Array.from(
+      new Set(
+        parent.children.flatMap((child) => [
+          child.classroomId,
+          ...child.reportCards.map((card) => card.classroomId),
+        ])
+      )
+    );
+    const [termPublications, sequencePublications] = await Promise.all([
+      prisma.resultPublication.findMany({
+        where: { classroomId: { in: classroomIds } },
+        select: { classroomId: true, termId: true, status: true },
+      }),
+      prisma.sequencePublication.findMany({
+        where: { classroomId: { in: classroomIds } },
+        select: { classroomId: true, sequenceId: true, status: true },
+      }),
+    ]);
+
+    const termPublicationByClass = new Map(
+      termPublications.map((publication) => [
+        `${publication.classroomId}:${publication.termId}`,
+        publication.status,
+      ])
+    );
+    const sequencePublicationByClass = new Map(
+      sequencePublications.map((publication) => [
+        `${publication.classroomId}:${publication.sequenceId}`,
+        publication.status,
+      ])
+    );
 
     // Parent title
     const gender = parent.gender?.toLowerCase();
@@ -73,12 +116,25 @@ export async function GET() {
     // Format children
     const children = parent.children.map((child) => {
       // Calculate average from the recorded marks
+      const publishedMarks = child.marks.filter((mark) => {
+        const sequenceStatus = sequencePublicationByClass.get(
+          `${child.classroomId}:${mark.sequenceId}`
+        );
+        const termPublished =
+          termPublicationByClass.get(`${child.classroomId}:${mark.termId}`) ===
+          "PUBLISHED";
+
+        return sequenceStatus
+          ? sequenceStatus === "PUBLISHED"
+          : termPublished;
+      });
+
       const average =
-        child.marks.length > 0
-          ? child.marks.reduce(
-              (total, mark) => total + mark.average,
+        publishedMarks.length > 0
+          ? publishedMarks.reduce(
+              (total, mark) => total + mark.score,
               0
-            ) / child.marks.length
+            ) / publishedMarks.length
           : 0;
 
       // Attendance rate from the recorded attendance
@@ -151,6 +207,23 @@ export async function GET() {
         // Academic information
         average: Number(average.toFixed(1)),
         attendance,
+        reportCards: child.reportCards
+          .filter(
+            (card) =>
+              termPublicationByClass.get(
+                `${card.classroomId}:${card.termId}`
+              ) === "PUBLISHED"
+          )
+          .map((card) => ({
+            id: card.id,
+            termId: card.termId,
+            term: `${card.term.academicYear.name} · ${card.term.name}`,
+            average: card.average,
+            rank: card.position,
+            decision: card.decision,
+            generatedAt: card.generatedAt,
+            pdfUrl: `/api/parent/report-cards/pdf?studentId=${encodeURIComponent(child.id)}&termId=${encodeURIComponent(card.termId)}`,
+          })),
 
         // Initials
         initials,
@@ -193,9 +266,16 @@ export async function GET() {
         id: notification.id,
         title: notification.title,
         message: notification.message,
-        type: notification.type,
+        type:
+          notification.type === "RESULT_PUBLISHED" ||
+          notification.type === "REPORT_AVAILABLE"
+            ? "result"
+            : notification.type === "ATTENDANCE_ALERT"
+              ? "attendance"
+              : "announcement",
         read: notification.isRead,
         createdAt: notification.createdAt,
+        actionUrl: notification.actionUrl,
       })),
     });
   } catch (error) {

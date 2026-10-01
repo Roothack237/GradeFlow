@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { notifyAdmins } from "@/lib/notifications";
 import { NextResponse } from "next/server";
 
 const VALID_STATUSES = [
@@ -407,6 +408,20 @@ export async function POST(request: Request) {
       savedCount++;
     }
 
+    try {
+      await notifyAdmins({
+        title: "Attendance submitted",
+        message: `${teacher.firstName} ${teacher.lastName} submitted attendance for ${classroom.section.name} · ${classroom.name} · ${subject.name} on ${attendanceDate.toLocaleDateString("en-GB")}.`,
+        type: "INFO",
+        senderId: session.user.id,
+        actionUrl: "/admin/results",
+        relatedType: "ATTENDANCE",
+        relatedId: classroom.id,
+      });
+    } catch (notificationError) {
+      console.error("ATTENDANCE ADMIN NOTIFICATION ERROR:", notificationError);
+    }
+
     // =========================================================
     // 15. SUCCESS
     // =========================================================
@@ -437,14 +452,19 @@ export async function POST(request: Request) {
       },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch (caughtError: unknown) {
+    const error =
+      caughtError && typeof caughtError === "object"
+        ? (caughtError as { message?: string; code?: string; meta?: unknown })
+        : null;
+
     // =========================================================
     // ERROR HANDLING
     // =========================================================
 
     console.error("========================================");
     console.error("SAVE ATTENDANCE ERROR");
-    console.error(error);
+    console.error(caughtError);
     console.error("MESSAGE:", error?.message);
     console.error("CODE:", error?.code);
     console.error("META:", error?.meta);
